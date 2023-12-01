@@ -8,8 +8,10 @@ use tokio::{
     io::{AsyncRead, AsyncSeek, ReadBuf},
     sync::Mutex,
 };
+use vecbuffer::VecBuffer;
 
 mod structs;
+mod vecbuffer;
 
 pub trait EntryData {
     type Reader: AsyncRead;
@@ -147,7 +149,7 @@ impl<D: EntryData> Builder<D> {
             total_size,
 
             state,
-            piece_pos: 0,
+            buffer: VecBuffer::new(),
 
             crc_cache,
         }
@@ -182,7 +184,7 @@ pub struct Reader<'a, D: EntryData> {
     total_size: u64,
 
     state: ZipPiece,
-    piece_pos: u64,
+    buffer: VecBuffer,
 
     crc_cache: &'a CrcCache,
 }
@@ -192,9 +194,8 @@ impl<'a, D: EntryData> Reader<'a, D> {
         self.total_size
     }
 
-    fn write_cd(&self, buf: &mut ReadBuf<'_>) {
-        dbg!(self.cd_size);
-        let eocd = structs::EndOfCentralDirectory {
+    fn make_eocd(&self) -> impl PackedStructSlice {
+        structs::EndOfCentralDirectory {
             signature: structs::EndOfCentralDirectory::SIGNATURE,
             this_disk_number: 0,
             start_of_cd_disk_number: 0,
@@ -203,8 +204,28 @@ impl<'a, D: EntryData> Reader<'a, D> {
             size_of_cd: self.cd_size as u32,
             offset_of_cd_start: 0,
             file_comment_length: 0,
-        };
-        pack_to_readbuf(&eocd, buf).unwrap();
+        }
+    }
+
+    fn write_packed_struct(
+        mut self: Pin<&mut Self>,
+        ps: impl PackedStructSlice,
+        output: &mut ReadBuf<'_>,
+    ) {
+        assert!(!self.buffer.has_remaining());
+
+        let size = PackedStructSlice::packed_bytes_size(Some(&ps)).unwrap();
+
+        if output.remaining() >= size {
+            let buf_slice = output.initialize_unfilled_to(size);
+            ps.pack_to_slice(buf_slice).unwrap();
+            output.advance(size);
+        } else {
+            let buf_slice = self.buffer.reset(size);
+            ps.pack_to_slice(buf_slice).unwrap();
+
+            self.buffer.read_into_readbuf(output);
+        }
     }
 }
 
@@ -215,7 +236,12 @@ impl<'a, D: EntryData> AsyncRead for Reader<'a, D> {
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
         loop {
-            let remaining_before = buf.remaining();
+            // If there is a part of a struct in the buffer waiting to be written,
+            // handle that first
+            if self.buffer.has_remaining() {
+                self.buffer.read_into_readbuf(buf);
+                return Poll::Ready(Ok(()));
+            }
 
             match self.state {
                 /*ZipPiece::LocalHeader(entry_index) => (),
@@ -224,9 +250,9 @@ impl<'a, D: EntryData> AsyncRead for Reader<'a, D> {
                 ZipPiece::CDFileHeader(_) => Some(ZipPiece::CDEnd),
                 */
                 ZipPiece::CDEnd => {
-                    self.write_cd(buf);
-                    let projected_self = self.as_mut().project();
-                    *projected_self.state = ZipPiece::Finished;
+                    let eocd = self.make_eocd();
+                    self.as_mut().write_packed_struct(eocd, buf);
+                    self.state = ZipPiece::Finished;
                     return Poll::Ready(Ok(()));
                 }
                 _ => {
@@ -236,19 +262,6 @@ impl<'a, D: EntryData> AsyncRead for Reader<'a, D> {
             //            ready!(self.as_mut().state.poll_read(&self.entries, ctx, buf))?;
         }
     }
-}
-
-/* Pack the packed struct into the readbuf, advancing the readbuf correctly.
-Returns None if there was not enough space, used number of bytes otherwise */
-fn pack_to_readbuf(ps: &impl PackedStructSlice, buf: &mut ReadBuf) -> Option<usize> {
-    let size = PackedStructSlice::packed_bytes_size(Some(ps)).unwrap();
-    if buf.remaining() < size {
-        return None;
-    }
-
-    ps.pack_to_slice(buf.initialize_unfilled_to(size)).unwrap();
-    buf.advance(size);
-    Some(size)
 }
 
 /*
@@ -263,30 +276,45 @@ mod test {
     use super::*;
     use assert2::assert;
     use proptest::prop_assume;
+    use std::future::Future;
     use test_strategy::proptest;
     use tokio::io::AsyncReadExt;
     use zip::read::ZipArchive;
 
-    fn read_to_vec(mut reader: impl AsyncRead) -> Vec<u8> {
-        let mut buf = Vec::new();
+    async fn read_to_vec(reader: impl AsyncRead, read_size: usize) -> Vec<u8> {
+        let mut buffer = Vec::new();
         let mut reader = Box::pin(reader);
 
+        loop {
+            let size_before = buffer.len();
+            buffer.resize(size_before + read_size, 0);
+            let (_, write_slice) = buffer.split_at_mut(size_before);
+
+            let size_read = reader.read(write_slice).await.unwrap();
+
+            buffer.truncate(size_before + size_read);
+
+            if size_read == 0 {
+                return buffer;
+            }
+        }
+    }
+
+    fn unasync<Fut: Future>(fut: Fut) -> Fut::Output {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap()
-            .block_on(reader.read_to_end(&mut buf))
-            .unwrap();
-
-        buf
+            .block_on(fut)
     }
-    #[test]
-    fn empty() {
+
+    #[proptest]
+    fn empty(#[strategy(1usize..8192usize)] read_size: usize) {
         let cache = CrcCache::unbounded();
-        let mut zippity: Reader<()> = Builder::new().build(&cache);
+        let zippity: Reader<()> = Builder::new().build(&cache);
         let size = zippity.get_size();
 
-        let buf = read_to_vec(zippity);
+        let buf = unasync(read_to_vec(zippity, read_size));
 
         assert!(size == (buf.len() as u64));
 
