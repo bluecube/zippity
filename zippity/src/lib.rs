@@ -2,14 +2,14 @@ use lru::LruCache;
 use packed_struct::{PackedStruct, PackedStructSlice};
 use pin_project::pin_project;
 use std::collections::BTreeMap;
+use std::future::Future;
+use std::io::{Error, Result};
 use std::num::NonZeroUsize;
 use std::pin::Pin;
-use std::task::{ready, Context, Poll};
+use std::task::{Context, Poll};
 use structs::PackedStructZippityExt;
-use tokio::{
-    io::{AsyncRead, AsyncSeek, ReadBuf},
-    sync::Mutex,
-};
+use thiserror::Error;
+use tokio::io::{AsyncRead, AsyncSeek, ReadBuf};
 use vecbuffer::VecBuffer;
 
 mod structs;
@@ -20,52 +20,52 @@ pub const ZIP64_VERSION_TO_EXTRACT: u16 = 45;
 
 pub trait EntryData {
     type Reader: AsyncRead;
+    type ReaderFuture: Future<Output = Result<Self::Reader>>;
 
     fn get_size(&self) -> u64;
-    fn get_reader(&self) -> Self::Reader;
+    fn get_reader(&self) -> Self::ReaderFuture;
 }
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq)]
 struct CrcCacheKey {}
 
-pub struct CrcCache(Mutex<LruCache<CrcCacheKey, u32>>);
+pub struct CrcCache(LruCache<CrcCacheKey, u32>);
 
 impl CrcCache {
     pub fn new(limit: NonZeroUsize) -> Self {
-        CrcCache(Mutex::new(LruCache::new(limit)))
+        CrcCache(LruCache::new(limit))
     }
 
     pub fn unbounded() -> Self {
-        CrcCache(Mutex::new(LruCache::unbounded()))
+        CrcCache(LruCache::unbounded())
     }
 }
 
 impl EntryData for () {
     type Reader = std::io::Cursor<&'static [u8]>;
+    type ReaderFuture = std::future::Ready<Result<Self::Reader>>;
 
     fn get_size(&self) -> u64 {
         0
     }
 
-    fn get_reader(&self) -> Self::Reader {
-        std::io::Cursor::new(&[])
+    fn get_reader(&self) -> Self::ReaderFuture {
+        std::future::ready(Ok(std::io::Cursor::new(&[])))
     }
 }
 
-/*impl<T> EntryData for T
-where
-    T: AsRef<[u8]> + Unpin,
-{
-    type Reader = std::io::Cursor<&[u8]>;
+impl<'a> EntryData for &'a [u8] {
+    type Reader = std::io::Cursor<&'a [u8]>;
+    type ReaderFuture = std::future::Ready<Result<Self::Reader>>;
 
     fn get_size(&self) -> u64 {
-        self.as_ref().len() as u64
+        self.len() as u64
     }
 
-    fn get_reader(&self) -> Self::Reader {
-        std::io::Cursor::new(self.as_ref())
+    fn get_reader(&self) -> Self::ReaderFuture {
+        std::future::ready(Ok(std::io::Cursor::new(self)))
     }
-}*/
+}
 
 #[derive(Clone, Debug)]
 struct BuilderEntry<D> {
@@ -77,15 +77,18 @@ impl<D: EntryData> BuilderEntry<D> {
         let local_header = structs::LocalFileHeader::packed_size();
         let filename = name.len() as u64;
         let data = self.data.get_size();
-        //let data_descriptor = structs::DataDescriptor64::packed_size();
+        let data_descriptor = structs::DataDescriptor32::packed_size();
 
-        local_header + filename + data
+        let size = local_header + filename + data + data_descriptor;
+        size
     }
 
     fn get_cd_header_size(&self, name: &str) -> u64 {
         let filename = name.len() as u64;
         let cd_entry = structs::CentralDirectoryHeader::packed_size();
-        cd_entry + filename
+
+        let size = cd_entry + filename;
+        size
     }
 }
 
@@ -95,6 +98,7 @@ struct ReaderEntry<D> {
     data: D,
     size: u64,
     offset: u64,
+    crc32: Option<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -115,7 +119,8 @@ impl<D: EntryData> Builder<D> {
             .insert(name, BuilderEntry { data: data.into() });
     }
 
-    pub fn build<'a>(self, crc_cache: &'a CrcCache) -> Reader<'a, D> {
+    pub fn build(self) -> Reader<D> {
+        // TODO: Allow filling CRCs from cache.
         let mut offset: u64 = 0;
         let mut cd_size: u64 = 0;
         let entries: Vec<_> = self
@@ -131,13 +136,15 @@ impl<D: EntryData> Builder<D> {
                     data: entry.data,
                     size,
                     offset: offset_copy,
+                    crc32: None,
                 }
             })
             .collect();
 
         let cd_offset = offset;
-        let total_size = cd_offset + cd_size + structs::EndOfCentralDirectory::packed_size();
-        let state = ZipPiece::new(&entries);
+        let eocd_size = structs::EndOfCentralDirectory::packed_size();
+        let total_size = cd_offset + cd_size + eocd_size;
+        let state = ReaderState::new(&entries);
 
         Reader {
             entries,
@@ -147,43 +154,48 @@ impl<D: EntryData> Builder<D> {
             total_size,
 
             state,
+            pinned: ReaderPinned::Nothing,
             buffer: VecBuffer::new(),
-
-            crc_cache,
         }
     }
 }
 
 #[derive(Debug)]
-enum ZipPiece {
+enum ReaderState {
     LocalHeader(usize),
-    LocalHeaderFilename {
+    LocalHeaderFilename(usize),
+    WaitForReader(usize),
+    FileData {
         entry_index: usize,
-        bytes_written: usize,
+        hasher: crc32fast::Hasher,
+        size: u64,
     },
-    FileData(usize), // TODO: Hasher
     DataDescriptor(usize),
     CDFileHeader(usize),
-    CDFileHeaderFilename {
-        entry_index: usize,
-        bytes_written: usize,
-    },
+    CDFileHeaderFilename(usize),
     CDEnd,
     Finished,
 }
 
-impl ZipPiece {
-    fn new<D>(entries: &Vec<ReaderEntry<D>>) -> ZipPiece {
+impl ReaderState {
+    fn new<D>(entries: &Vec<ReaderEntry<D>>) -> ReaderState {
         if entries.is_empty() {
-            ZipPiece::CDEnd
+            ReaderState::CDEnd
         } else {
-            ZipPiece::LocalHeader(0)
+            ReaderState::LocalHeader(0)
         }
     }
 }
 
+#[pin_project(project = ReaderPinnedProj)]
+enum ReaderPinned<D: EntryData> {
+    Nothing,
+    ReaderFuture(#[pin] D::ReaderFuture),
+    FileReader(#[pin] D::Reader),
+}
+
 #[pin_project]
-pub struct Reader<'a, D: EntryData> {
+pub struct Reader<D: EntryData> {
     /// Vector of entries and their offsets  (counted from start of file)
     entries: Vec<ReaderEntry<D>>,
 
@@ -191,35 +203,84 @@ pub struct Reader<'a, D: EntryData> {
     cd_size: u64,
     total_size: u64,
 
-    state: ZipPiece,
+    state: ReaderState,
+    #[pin]
+    pinned: ReaderPinned<D>,
     buffer: VecBuffer,
-
-    crc_cache: &'a CrcCache,
 }
 
-impl<'a, D: EntryData> Reader<'a, D> {
+/// Write as much of ps as possible into output, spill the rest to overflow
+/// Overflow has to be empty.
+fn write_packed_struct<P: PackedStruct>(ps: P, output: &mut ReadBuf<'_>, overflow: &mut VecBuffer) {
+    assert!(!overflow.has_remaining());
+
+    let size = P::packed_size() as usize;
+
+    if output.remaining() >= size {
+        let buf_slice = output.initialize_unfilled_to(size);
+        ps.pack_to_slice(buf_slice).unwrap();
+        output.advance(size);
+    } else {
+        let buf_slice = overflow.reset(size);
+        ps.pack_to_slice(buf_slice).unwrap();
+
+        overflow.read_into_readbuf(output);
+    }
+}
+
+/// Write as much of a string slice as possible into output, spill the rest to overflow
+/// Overflow has to be empty.
+fn write_slice(slice: &str, output: &mut ReadBuf<'_>, overflow: &mut VecBuffer) {
+    assert!(!overflow.has_remaining());
+
+    let bytes = slice.as_bytes();
+
+    if bytes.len() <= output.remaining() {
+        output.put_slice(bytes);
+    } else {
+        let (to_output, to_overflow) = bytes.split_at(output.remaining());
+        output.put_slice(to_output);
+        overflow
+            .reset(to_overflow.len())
+            .copy_from_slice(to_overflow);
+    }
+}
+
+impl<D: EntryData> Reader<D> {
     pub fn get_size(&self) -> u64 {
         self.total_size
     }
+}
 
-    fn make_local_header(&self, entry_index: usize) -> impl PackedStruct {
+impl<D: EntryData> ReaderEntry<D> {
+    fn make_local_header(&self) -> impl PackedStruct {
         structs::LocalFileHeader {
             signature: structs::LocalFileHeader::SIGNATURE,
             version_to_extract: ZIP64_VERSION_TO_EXTRACT,
-            flags: 0,
+            flags: structs::GpBitFlag {
+                use_data_descriptor: true,
+            },
             compression: structs::Compression::Store,
             last_mod_time: 0,
             last_mod_date: 0,
             crc32: 0,
             compressed_size: 0,
             uncompressed_size: 0,
-            file_name_len: self.entries[entry_index].name.len() as u16,
+            file_name_len: self.name.len() as u16,
             extra_field_len: 0,
         }
     }
 
-    fn make_cd_header(&self, entry_index: usize) -> impl PackedStruct {
-        let entry = &self.entries[entry_index];
+    fn make_data_descriptor32(&self) -> impl PackedStruct {
+        structs::DataDescriptor32 {
+            signature: structs::DataDescriptor32::SIGNATURE,
+            crc32: self.crc32.unwrap(),
+            compressed_size: self.data.get_size() as u32, // TODO: zip64
+            uncompressed_size: self.data.get_size() as u32, // TODO: zip64
+        }
+    }
+
+    fn make_cd_header(&self) -> impl PackedStruct {
         structs::CentralDirectoryHeader {
             signature: structs::CentralDirectoryHeader::SIGNATURE,
             version_made_by: structs::VersionMadeBy {
@@ -231,161 +292,188 @@ impl<'a, D: EntryData> Reader<'a, D> {
             compression: structs::Compression::Store,
             last_mod_time: 0,
             last_mod_date: 0,
-            crc32: 0,
-            compressed_size: 0,
-            uncompressed_size: 0,
-            file_name_len: entry.name.len() as u16,
+            crc32: self.crc32.unwrap(),
+            compressed_size: self.data.get_size() as u32, // TODO: zip64
+            uncompressed_size: self.data.get_size() as u32, // TODO: zip64
+            file_name_len: self.name.len() as u16,
             extra_field_len: 0,
             file_comment_length: 0,
             disk_number_start: 0,
             internal_attributes: 0,
             external_attributes: 0,
-            local_header_offset: entry.offset as u32,
-        }
-    }
-
-    fn make_eocd(&self) -> impl PackedStruct {
-        structs::EndOfCentralDirectory {
-            signature: structs::EndOfCentralDirectory::SIGNATURE,
-            this_disk_number: 0,
-            start_of_cd_disk_number: 0,
-            this_cd_entry_count: self.entries.len() as u16,
-            total_cd_entry_count: self.entries.len() as u16,
-            size_of_cd: self.cd_size as u32,
-            cd_offset: self.cd_offset as u32,
-            file_comment_length: 0,
-        }
-    }
-
-    fn write_packed_struct<T: PackedStruct>(
-        mut self: Pin<&mut Self>,
-        ps: T,
-        output: &mut ReadBuf<'_>,
-    ) {
-        assert!(!self.buffer.has_remaining());
-
-        let size = T::packed_size() as usize;
-
-        if output.remaining() >= size {
-            let buf_slice = output.initialize_unfilled_to(size);
-            ps.pack_to_slice(buf_slice).unwrap();
-            output.advance(size);
-        } else {
-            let buf_slice = self.buffer.reset(size);
-            ps.pack_to_slice(buf_slice).unwrap();
-
-            self.buffer.read_into_readbuf(output);
-        }
-    }
-
-    fn write_filename(
-        &self,
-        entry_index: usize,
-        bytes_written: usize,
-        output: &mut ReadBuf<'_>,
-    ) -> Option<usize> {
-        let bytes = self.entries[entry_index].name.as_bytes();
-        let bytes = &bytes[bytes_written..];
-
-        if bytes.len() <= output.remaining() {
-            output.put_slice(bytes);
-            None
-        } else {
-            let new_bytes_written = bytes_written + output.remaining();
-            output.put_slice(&bytes[..output.remaining()]);
-            Some(new_bytes_written)
+            local_header_offset: self.offset as u32,
         }
     }
 }
 
-impl<'a, D: EntryData> AsyncRead for Reader<'a, D> {
+fn make_eocd<D: EntryData>(
+    entries: &Vec<ReaderEntry<D>>,
+    cd_size: u64,
+    cd_offset: u64,
+) -> impl PackedStruct {
+    structs::EndOfCentralDirectory {
+        signature: structs::EndOfCentralDirectory::SIGNATURE,
+        this_disk_number: 0,
+        start_of_cd_disk_number: 0,
+        this_cd_entry_count: entries.len() as u16,
+        total_cd_entry_count: entries.len() as u16,
+        size_of_cd: cd_size as u32,
+        cd_offset: cd_offset as u32,
+        file_comment_length: 0,
+    }
+}
+
+impl<D: EntryData> AsyncRead for Reader<D> {
     fn poll_read(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         ctx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        // TODO: Don't return immediately after every write, keep looping
-        loop {
+        let mut projected = self.project();
+        let initial_remaining = buf.remaining();
+
+        while buf.remaining() > 0 {
             // If there is a part of a struct in the buffer waiting to be written,
             // handle that first
-            if self.buffer.has_remaining() {
-                self.buffer.read_into_readbuf(buf);
+            if projected.buffer.has_remaining() {
+                projected.buffer.read_into_readbuf(buf);
                 return Poll::Ready(Ok(()));
             }
 
-            match self.state {
-                ZipPiece::LocalHeader(entry_index) => {
-                    let lh = self.make_local_header(entry_index);
-                    self.as_mut().write_packed_struct(lh, buf);
-                    self.state = ZipPiece::LocalHeaderFilename {
-                        entry_index,
-                        bytes_written: 0,
-                    };
+            match projected.state {
+                ReaderState::LocalHeader(entry_index) => {
+                    let entry = &projected.entries[*entry_index];
+                    write_packed_struct(entry.make_local_header(), buf, &mut projected.buffer);
+                    *projected.state = ReaderState::LocalHeaderFilename(*entry_index);
                 }
-                ZipPiece::LocalHeaderFilename {
-                    entry_index,
-                    bytes_written,
-                } => {
-                    if let Some(new_bytes_written) =
-                        self.write_filename(entry_index, bytes_written, buf)
-                    {
-                        self.state = ZipPiece::LocalHeaderFilename {
-                            entry_index,
-                            bytes_written: new_bytes_written,
-                        };
-                        return Poll::Ready(Ok(()));
-                    } else {
-                        let entry_index = entry_index + 1;
-                        self.state = if entry_index < self.entries.len() {
-                            ZipPiece::LocalHeader(entry_index)
-                        } else {
-                            ZipPiece::CDFileHeader(0)
-                        };
+                ReaderState::LocalHeaderFilename(entry_index) => {
+                    let entry = &projected.entries[*entry_index];
+                    write_slice(&entry.name, buf, &mut projected.buffer);
+
+                    projected
+                        .pinned
+                        .set(ReaderPinned::ReaderFuture(entry.data.get_reader()));
+                    *projected.state = ReaderState::WaitForReader(*entry_index);
+                }
+                ReaderState::WaitForReader(entry_index) => {
+                    let ReaderPinnedProj::ReaderFuture(future) =
+                        projected.pinned.as_mut().project()
+                    else {
+                        panic!("Wrong pinned future");
+                    };
+
+                    match future.poll(ctx) {
+                        Poll::Ready(Ok(reader)) => {
+                            projected.pinned.set(ReaderPinned::FileReader(reader));
+                            *projected.state = ReaderState::FileData {
+                                entry_index: *entry_index,
+                                hasher: crc32fast::Hasher::new(),
+                                size: 0,
+                            };
+                        }
+                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                        Poll::Pending => {
+                            if buf.remaining() == initial_remaining {
+                                return Poll::Pending;
+                            } else {
+                                return Poll::Ready(Ok(()));
+                            }
+                        }
                     }
                 }
-                ZipPiece::FileData(entry_index) => (),
-                ZipPiece::DataDescriptor(entry_index) => (),
-                ZipPiece::CDFileHeader(entry_index) => {
-                    let lh = self.make_cd_header(entry_index);
-                    self.as_mut().write_packed_struct(lh, buf);
-                    self.state = ZipPiece::CDFileHeaderFilename {
-                        entry_index,
-                        bytes_written: 0,
-                    };
-                }
-                ZipPiece::CDFileHeaderFilename {
+                ReaderState::FileData {
                     entry_index,
-                    bytes_written,
+                    hasher,
+                    size,
                 } => {
-                    if let Some(new_bytes_written) =
-                        self.write_filename(entry_index, bytes_written, buf)
-                    {
-                        self.state = ZipPiece::CDFileHeaderFilename {
-                            entry_index,
-                            bytes_written: new_bytes_written,
-                        };
-                        return Poll::Ready(Ok(()));
-                    } else {
-                        let entry_index = entry_index + 1;
-                        self.state = if entry_index < self.entries.len() {
-                            ZipPiece::CDFileHeader(entry_index)
-                        } else {
-                            ZipPiece::CDEnd
-                        };
+                    let ReaderPinnedProj::FileReader(reader) = projected.pinned.as_mut().project()
+                    else {
+                        panic!("Wrong pinned future");
+                    };
+
+                    let remaining_before_poll = buf.remaining();
+                    match reader.poll_read(ctx, buf) {
+                        Poll::Ready(Ok(())) => {
+                            if buf.remaining() == remaining_before_poll {
+                                // Nothing was output => we read everything in the file already
+
+                                let entry = &mut projected.entries[*entry_index];
+                                // Cloning as a workaround -- finalize consumes, but we only borrowed the hasher mutably
+                                entry.crc32 = Some(hasher.clone().finalize());
+
+                                let reported_length = entry.data.get_size();
+                                if *size != reported_length {
+                                    return Poll::Ready(Err(Error::other(Box::new(
+                                        ZippityError::LengthMismatch {
+                                            entry_name: entry.name.clone(),
+                                            reported_length,
+                                            actual_length: *size,
+                                        },
+                                    ))));
+                                }
+
+                                projected.pinned.set(ReaderPinned::Nothing);
+                                *projected.state = ReaderState::DataDescriptor(*entry_index);
+                            } else {
+                                let written_chunk_size = remaining_before_poll - buf.remaining();
+                                let buf_slice = buf.filled();
+                                let written_chunk =
+                                    &buf_slice[(buf_slice.len() - written_chunk_size)..];
+                                assert!(written_chunk_size == written_chunk.len());
+
+                                hasher.update(written_chunk);
+                                *size += written_chunk.len() as u64;
+                            }
+                        }
+                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                        Poll::Pending => {
+                            if buf.remaining() == initial_remaining {
+                                return Poll::Pending;
+                            } else {
+                                return Poll::Ready(Ok(()));
+                            }
+                        }
                     }
                 }
-                ZipPiece::CDEnd => {
-                    let eocd = self.make_eocd();
-                    self.as_mut().write_packed_struct(eocd, buf);
-                    self.state = ZipPiece::Finished;
-                    return Poll::Ready(Ok(()));
+                ReaderState::DataDescriptor(entry_index) => {
+                    let entry = &projected.entries[*entry_index];
+                    write_packed_struct(entry.make_data_descriptor32(), buf, projected.buffer);
+                    let entry_index = *entry_index + 1;
+                    *projected.state = if entry_index < projected.entries.len() {
+                        ReaderState::LocalHeader(entry_index)
+                    } else {
+                        ReaderState::CDFileHeader(0)
+                    }
+                }
+                ReaderState::CDFileHeader(entry_index) => {
+                    let entry = &projected.entries[*entry_index];
+                    write_packed_struct(entry.make_cd_header(), buf, projected.buffer);
+                    *projected.state = ReaderState::CDFileHeaderFilename(*entry_index);
+                }
+                ReaderState::CDFileHeaderFilename(entry_index) => {
+                    let entry = &projected.entries[*entry_index];
+                    write_slice(&entry.name, buf, projected.buffer);
+
+                    let entry_index = *entry_index + 1;
+                    *projected.state = if entry_index < projected.entries.len() {
+                        ReaderState::CDFileHeader(entry_index)
+                    } else {
+                        ReaderState::CDEnd
+                    };
+                }
+                ReaderState::CDEnd => {
+                    let eocd =
+                        make_eocd(projected.entries, *projected.cd_size, *projected.cd_offset);
+                    write_packed_struct(eocd, buf, projected.buffer);
+                    *projected.state = ReaderState::Finished;
                 }
                 _ => {
                     return Poll::Ready(Ok(()));
                 }
             }
-            //            ready!(self.as_mut().state.poll_read(&self.entries, ctx, buf))?;
         }
+
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -396,17 +484,27 @@ impl<'a, D: EntryData> AsyncSeek for ArchiveReader<'a, D> {
     fn poll_complete(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<u64>> {}
 }*/
 
+#[derive(Clone, Debug, Error, PartialEq)]
+pub enum ZippityError {
+    #[error("Entry {entry_name} reports length {reported_length} B, but was {actual_length} B")]
+    LengthMismatch {
+        entry_name: String,
+        reported_length: u64,
+        actual_length: u64,
+    },
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
     use assert2::assert;
     use proptest::strategy::{Just, Strategy};
-    use std::{collections::HashMap, future::Future};
+    use std::{collections::HashMap, fmt::format, future::Future, io::ErrorKind};
     use test_strategy::proptest;
     use tokio::io::AsyncReadExt;
     use zip::read::ZipArchive;
 
-    async fn read_to_vec(reader: impl AsyncRead, read_size: usize) -> Vec<u8> {
+    async fn read_to_vec(reader: impl AsyncRead, read_size: usize) -> Result<Vec<u8>> {
         let mut buffer = Vec::new();
         let mut reader = Box::pin(reader);
 
@@ -415,12 +513,12 @@ mod test {
             buffer.resize(size_before + read_size, 0);
             let (_, write_slice) = buffer.split_at_mut(size_before);
 
-            let size_read = reader.read(write_slice).await.unwrap();
+            let size_read = reader.read(write_slice).await?;
 
             buffer.truncate(size_before + size_read);
 
             if size_read == 0 {
-                return buffer;
+                return Ok(buffer);
             }
         }
     }
@@ -433,23 +531,22 @@ mod test {
             .block_on(fut)
     }
 
-    fn content_strategy() -> impl Strategy<Value = HashMap<String, ()>> {
+    fn content_strategy() -> impl Strategy<Value = HashMap<String, Vec<u8>>> {
         proptest::collection::hash_map(
             // We're limiting the character set significantly, because the zip crate we use for verification
             // does not handle unicode filenames well.
-            r"[a-zA-Z0-91235678!@#$%^&U*/><\\\[\]]{1,1000}",
-            Just(()),
+            r"[a-zA-Z0-91235678!@#$%^&U*/><\\\[\]]{1,500}",
+            proptest::collection::vec(0u8..255u8, 0..1024),
             0..100,
         )
     }
 
     #[proptest]
-    fn empty(#[strategy(1usize..8192usize)] read_size: usize) {
-        let cache = CrcCache::unbounded();
-        let zippity: Reader<()> = Builder::new().build(&cache);
+    fn test_empty_archive(#[strategy(1usize..8192usize)] read_size: usize) {
+        let zippity: Reader<()> = Builder::new().build();
         let size = zippity.get_size();
 
-        let buf = unasync(read_to_vec(zippity, read_size));
+        let buf = unasync(read_to_vec(zippity, read_size)).unwrap();
 
         assert!(size == (buf.len() as u64));
 
@@ -458,30 +555,65 @@ mod test {
     }
 
     #[proptest]
-    fn alltest(
-        #[strategy(content_strategy())] content: HashMap<String, ()>,
+    fn test_unzip_with_data(
+        #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
         #[strategy(1usize..8192usize)] read_size: usize,
     ) {
-        let mut builder = Builder::new();
+        let mut builder: Builder<&[u8]> = Builder::new();
 
-        content.iter().for_each(|(name, _value)| {
-            builder.add_entry(name.clone(), ());
+        content.iter().for_each(|(name, value)| {
+            builder.add_entry(name.clone(), value.as_ref());
         });
 
-        let cache = CrcCache::unbounded();
-        let zippity: Reader<()> = builder.build(&cache);
+        let zippity = builder.build();
         let size = zippity.get_size();
 
-        let buf = unasync(read_to_vec(zippity, read_size));
+        let buf = unasync(read_to_vec(zippity, read_size)).unwrap();
 
         assert!(size == (buf.len() as u64));
 
-        let unpacked = ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip");
-        let unpacked_names = unpacked
-            .file_names()
-            .map(|name| (name.to_string(), ()))
-            .collect::<HashMap<_, _>>();
+        let mut unpacked =
+            ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip");
+        assert!(unpacked.len() == content.len());
 
-        assert!(unpacked_names == content);
+        let mut unpacked_content = HashMap::new();
+        for i in 0..unpacked.len() {
+            let mut zipfile = unpacked.by_index(i).unwrap();
+            let name = std::str::from_utf8(zipfile.name_raw()).unwrap().to_string();
+            let mut file_content = Vec::new();
+            use std::io::Read;
+            zipfile.read_to_end(&mut file_content).unwrap();
+
+            unpacked_content.insert(name, file_content);
+        }
+    }
+
+    #[test]
+    fn bad_size() {
+        /// Struct that reports data size 100, but actually its 1
+        struct BadSize();
+        impl EntryData for BadSize {
+            type Reader = std::io::Cursor<&'static [u8]>;
+            type ReaderFuture = std::future::Ready<Result<Self::Reader>>;
+
+            fn get_size(&self) -> u64 {
+                100
+            }
+
+            fn get_reader(&self) -> Self::ReaderFuture {
+                std::future::ready(Ok(std::io::Cursor::new(&[5])))
+            }
+        }
+
+        let mut builder: Builder<BadSize> = Builder::new();
+        builder.add_entry("xxx".into(), BadSize());
+
+        let zippity = builder.build();
+        let e = unasync(read_to_vec(zippity, 1024)).unwrap_err();
+
+        assert!(e.kind() == ErrorKind::Other);
+        let message = format!("{}", e.into_inner().unwrap());
+
+        assert!(message.contains("xxx"));
     }
 }

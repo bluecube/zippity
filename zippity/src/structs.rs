@@ -8,7 +8,8 @@ use packed_struct::prelude::*;
 pub struct LocalFileHeader {
     pub signature: u32,
     pub version_to_extract: u16,
-    pub flags: u16,
+    #[packed_field(size_bytes = "2")]
+    pub flags: GpBitFlag,
     #[packed_field(size_bytes = "2", ty = "enum")]
     pub compression: Compression,
     pub last_mod_time: u16,
@@ -25,6 +26,13 @@ impl LocalFileHeader {
 }
 
 #[derive(Debug, PackedStruct)]
+#[packed_struct(bit_numbering = "lsb0", size_bytes = "2")]
+pub struct GpBitFlag {
+    #[packed_field(bits = "3")]
+    pub use_data_descriptor: bool,
+}
+
+#[derive(Debug, PackedStruct)]
 #[packed_struct(endian = "lsb")]
 pub struct Zip64ExtraField {
     pub crc32: u32,
@@ -36,10 +44,15 @@ pub struct Zip64ExtraField {
 /// Follows file data.
 #[derive(Debug, PackedStruct)]
 #[packed_struct(endian = "lsb")]
-pub struct DataDescriptor64 {
+pub struct DataDescriptor32 {
+    pub signature: u32,
     pub crc32: u32,
-    pub compressed_size: u64,
-    pub uncompressed_size: u64,
+    pub compressed_size: u32,
+    pub uncompressed_size: u32,
+}
+
+impl DataDescriptor32 {
+    pub const SIGNATURE: u32 = 0x08074b50;
 }
 
 /// Central directory header
@@ -106,7 +119,7 @@ impl EndOfCentralDirectory {
 #[derive(Clone, Copy, Debug, PrimitiveEnum_u16)]
 #[non_exhaustive]
 pub enum Compression {
-    Store = 1,
+    Store = 0,
 }
 
 pub trait PackedStructZippityExt {
