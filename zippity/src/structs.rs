@@ -35,23 +35,29 @@ pub struct GpBitFlag {
 #[derive(Debug, PackedStruct)]
 #[packed_struct(endian = "lsb")]
 pub struct Zip64ExtraField {
-    pub crc32: u32,
-    pub compressed_size: u64,
+    pub tag: u16,
+    pub size: u16,
     pub uncompressed_size: u64,
+    pub compressed_size: u64,
+    pub offset: u64,
+}
+
+impl Zip64ExtraField {
+    pub const TAG: u16 = 0x0001;
 }
 
 /// Zip64 version of the data descriptor
 /// Follows file data.
 #[derive(Debug, PackedStruct)]
 #[packed_struct(endian = "lsb")]
-pub struct DataDescriptor32 {
+pub struct DataDescriptor64 {
     pub signature: u32,
     pub crc32: u32,
-    pub compressed_size: u32,
-    pub uncompressed_size: u32,
+    pub compressed_size: u64,
+    pub uncompressed_size: u64,
 }
 
-impl DataDescriptor32 {
+impl DataDescriptor64 {
     pub const SIGNATURE: u32 = 0x08074b50;
 }
 
@@ -97,6 +103,39 @@ pub struct VersionMadeBy {
 #[non_exhaustive]
 pub enum VersionMadeByOs {
     UNIX = 3,
+}
+
+#[derive(Debug, PackedStruct)]
+#[packed_struct(endian = "lsb")]
+pub struct Zip64EndOfCentralDirectoryRecord {
+    pub signature: u32,
+    pub size_of_zip64_eocd: u64,
+    #[packed_field(size_bytes = "2")]
+    pub version_made_by: VersionMadeBy,
+    pub version_to_extract: u16,
+    pub this_disk_number: u32,
+    pub start_of_cd_disk_number: u32,
+    pub this_cd_entry_count: u64,
+    pub total_cd_entry_count: u64,
+    pub size_of_cd: u64,
+    pub cd_offset: u64,
+}
+
+impl Zip64EndOfCentralDirectoryRecord {
+    pub const SIGNATURE: u32 = 0x06064b50;
+}
+
+#[derive(Debug, PackedStruct)]
+#[packed_struct(endian = "lsb")]
+pub struct Zip64EndOfCentralDirectoryLocator {
+    pub signature: u32,
+    pub start_of_cd_disk_number: u32,
+    pub zip64_eocd_offset: u64,
+    pub number_of_disks: u32,
+}
+
+impl Zip64EndOfCentralDirectoryLocator {
+    pub const SIGNATURE: u32 = 0x07064b50;
 }
 
 #[derive(Debug, PackedStruct)]

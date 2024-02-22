@@ -77,19 +77,21 @@ struct BuilderEntry<D> {
 impl<D: EntryData> BuilderEntry<D> {
     fn get_local_size(&self, name: &str) -> u64 {
         let local_header = structs::LocalFileHeader::packed_size();
+        let zip64_extra_data = structs::Zip64ExtraField::packed_size();
         let filename = name.len() as u64;
         let data = self.data.get_size();
-        let data_descriptor = structs::DataDescriptor32::packed_size();
+        let data_descriptor = structs::DataDescriptor64::packed_size();
 
-        let size = local_header + filename + data + data_descriptor;
+        let size = local_header + zip64_extra_data + filename + data + data_descriptor;
         size
     }
 
     fn get_cd_header_size(&self, name: &str) -> u64 {
         let filename = name.len() as u64;
         let cd_entry = structs::CentralDirectoryHeader::packed_size();
+        let zip64_extra_data = structs::Zip64ExtraField::packed_size();
 
-        let size = cd_entry + filename;
+        let size = cd_entry + zip64_extra_data + filename;
         size
     }
 }
@@ -98,7 +100,6 @@ impl<D: EntryData> BuilderEntry<D> {
 struct ReaderEntry<D: EntryData> {
     name: String,
     data: D,
-    size: u64,
     offset: u64,
     crc32: Option<u32>,
 }
@@ -136,7 +137,6 @@ impl<D: EntryData> Builder<D> {
                 ReaderEntry {
                     name,
                     data: entry.data,
-                    size,
                     offset: offset_copy,
                     crc32: None,
                 }
@@ -144,7 +144,10 @@ impl<D: EntryData> Builder<D> {
             .collect();
 
         let cd_offset = offset;
-        let eocd_size = structs::EndOfCentralDirectory::packed_size();
+        let eocd_size = structs::Zip64EndOfCentralDirectoryRecord::packed_size()
+            + structs::Zip64EndOfCentralDirectoryLocator::packed_size()
+            + structs::EndOfCentralDirectory::packed_size();
+        let eocd_offset = cd_offset + cd_size;
         let total_size = cd_offset + cd_size + eocd_size;
         let current_chunk = Chunk::new(&entries);
 
@@ -152,6 +155,7 @@ impl<D: EntryData> Builder<D> {
             sizes: Sizes {
                 cd_offset,
                 cd_size,
+                eocd_offset,
                 total_size,
             },
             entries,
@@ -188,15 +192,22 @@ impl Chunk {
     fn size<D: EntryData>(&self, entries: &[ReaderEntry<D>]) -> u64 {
         match self {
             Chunk::LocalHeader { entry_index } => {
-                structs::LocalFileHeader::packed_size() + entries[*entry_index].name.len() as u64
+                structs::LocalFileHeader::packed_size()
+                    + entries[*entry_index].name.len() as u64
+                    + structs::Zip64ExtraField::packed_size()
             }
             Chunk::FileData { entry_index } => entries[*entry_index].data.get_size(),
-            Chunk::DataDescriptor { entry_index: _ } => structs::DataDescriptor32::packed_size(),
+            Chunk::DataDescriptor { entry_index: _ } => structs::DataDescriptor64::packed_size(),
             Chunk::CDFileHeader { entry_index } => {
                 structs::CentralDirectoryHeader::packed_size()
                     + entries[*entry_index].name.len() as u64
+                    + structs::Zip64ExtraField::packed_size()
             }
-            Chunk::EOCD => structs::EndOfCentralDirectory::packed_size(),
+            Chunk::EOCD => {
+                structs::Zip64EndOfCentralDirectoryLocator::packed_size()
+                    + structs::Zip64EndOfCentralDirectoryRecord::packed_size()
+                    + structs::EndOfCentralDirectory::packed_size()
+            }
             Chunk::Finished => 0,
         }
     }
@@ -254,10 +265,12 @@ struct ReadState {
 
 #[pin_project]
 pub struct Reader<D: EntryData> {
+    /// Sizes of central directory and whole zip.
+    /// These should be immutable dring the Reader lifetime
     sizes: Sizes,
 
-    // These should be immutable dring the Reader lifetime
     /// Vector of entries and their offsets (counted from start of file)
+    /// CRCs may get mutated during reading
     entries: Vec<ReaderEntry<D>>,
 
     /// Parts of mutable state that don't need pinning
@@ -271,6 +284,7 @@ pub struct Reader<D: EntryData> {
 struct Sizes {
     cd_offset: u64,
     cd_size: u64,
+    eocd_offset: u64,
     total_size: u64,
 }
 
@@ -359,14 +373,24 @@ impl ReadState {
                 last_mod_time: 0,
                 last_mod_date: 0,
                 crc32: 0,
-                compressed_size: 0,
-                uncompressed_size: 0,
+                compressed_size: 0xffffffff,
+                uncompressed_size: 0xffffffff,
                 file_name_len: entry.name.len() as u16,
-                extra_field_len: 0,
+                extra_field_len: structs::Zip64ExtraField::packed_size() as u16,
             },
             output,
         );
         self.read_str(&entry.name, output);
+        self.read_packed_struct(
+            structs::Zip64ExtraField {
+                tag: structs::Zip64ExtraField::TAG,
+                size: structs::Zip64ExtraField::packed_size() as u16 - 4,
+                uncompressed_size: 0,
+                compressed_size: 0,
+                offset: entry.offset,
+            },
+            output,
+        );
 
         true
     }
@@ -446,11 +470,11 @@ impl ReadState {
     ) -> bool {
         // TODO: Recalculate CRC if needed
         self.read_packed_struct(
-            structs::DataDescriptor32 {
-                signature: structs::DataDescriptor32::SIGNATURE,
+            structs::DataDescriptor64 {
+                signature: structs::DataDescriptor64::SIGNATURE,
                 crc32: entry.crc32.unwrap(),
-                compressed_size: entry.data.get_size() as u32, // TODO: zip64
-                uncompressed_size: entry.data.get_size() as u32, // TODO: zip64
+                compressed_size: entry.data.get_size(),
+                uncompressed_size: entry.data.get_size(),
             },
             output,
         );
@@ -477,19 +501,29 @@ impl ReadState {
                 last_mod_time: 0,
                 last_mod_date: 0,
                 crc32: entry.crc32.unwrap(),
-                compressed_size: entry.data.get_size() as u32, // TODO: zip64
-                uncompressed_size: entry.data.get_size() as u32, // TODO: zip64
+                compressed_size: 0xffffffff,
+                uncompressed_size: 0xffffffff,
                 file_name_len: entry.name.len() as u16,
-                extra_field_len: 0,
+                extra_field_len: structs::Zip64ExtraField::packed_size() as u16,
                 file_comment_length: 0,
-                disk_number_start: 0,
+                disk_number_start: 0xffff,
                 internal_attributes: 0,
                 external_attributes: 0,
-                local_header_offset: entry.offset as u32,
+                local_header_offset: 0xffffffff,
             },
             output,
         );
         self.read_str(&entry.name, output);
+        self.read_packed_struct(
+            structs::Zip64ExtraField {
+                tag: structs::Zip64ExtraField::TAG,
+                size: structs::Zip64ExtraField::packed_size() as u16 - 4,
+                uncompressed_size: entry.data.get_size(),
+                compressed_size: entry.data.get_size(),
+                offset: entry.offset,
+            },
+            output,
+        );
 
         true
     }
@@ -501,14 +535,41 @@ impl ReadState {
         output: &mut ReadBuf<'_>,
     ) -> bool {
         self.read_packed_struct(
+            structs::Zip64EndOfCentralDirectoryRecord {
+                signature: structs::Zip64EndOfCentralDirectoryRecord::SIGNATURE,
+                size_of_zip64_eocd: structs::Zip64EndOfCentralDirectoryRecord::packed_size() - 12,
+                version_made_by: structs::VersionMadeBy {
+                    os: structs::VersionMadeByOs::UNIX,
+                    spec_version: ZIP64_VERSION_TO_EXTRACT as u8,
+                },
+                version_to_extract: ZIP64_VERSION_TO_EXTRACT,
+                this_disk_number: 0,
+                start_of_cd_disk_number: 0,
+                this_cd_entry_count: entries.len() as u64,
+                total_cd_entry_count: entries.len() as u64,
+                size_of_cd: sizes.cd_size,
+                cd_offset: sizes.cd_offset,
+            },
+            output,
+        );
+        self.read_packed_struct(
+            structs::Zip64EndOfCentralDirectoryLocator {
+                signature: structs::Zip64EndOfCentralDirectoryLocator::SIGNATURE,
+                start_of_cd_disk_number: 0,
+                zip64_eocd_offset: sizes.eocd_offset,
+                number_of_disks: 1,
+            },
+            output,
+        );
+        self.read_packed_struct(
             structs::EndOfCentralDirectory {
                 signature: structs::EndOfCentralDirectory::SIGNATURE,
                 this_disk_number: 0,
                 start_of_cd_disk_number: 0,
-                this_cd_entry_count: entries.len() as u16,
-                total_cd_entry_count: entries.len() as u16,
-                size_of_cd: sizes.cd_size as u32,
-                cd_offset: sizes.cd_offset as u32,
+                this_cd_entry_count: 0xffff,
+                total_cd_entry_count: 0xffff,
+                size_of_cd: 0xffffffff,
+                cd_offset: 0xffffffff,
                 file_comment_length: 0,
             },
             output,
@@ -877,5 +938,44 @@ mod test {
         let message = format!("{}", e.into_inner().unwrap());
 
         assert!(message.contains("xxx"));
+    }
+
+    #[proptest]
+    fn local_size_matches_chunks(
+        #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
+    ) {
+        let mut builder: Builder<&[u8]> = Builder::new();
+
+        content.iter().for_each(|(name, value)| {
+            builder.add_entry(name.clone(), value.as_ref());
+        });
+
+        let local_sizes: HashMap<String, u64> = builder
+            .entries
+            .iter()
+            .map(|(k, v)| (k.clone(), v.get_local_size(k)))
+            .collect();
+
+        let zippity = builder.build();
+
+        for i in 0..zippity.entries.len() {
+            let mut entry_local_size = 0;
+            let mut chunk = Chunk::LocalHeader { entry_index: i };
+            loop {
+                dbg!(&chunk);
+                dbg!(chunk.size(&zippity.entries));
+                entry_local_size += chunk.size(&zippity.entries);
+                chunk = chunk.next(&zippity.entries);
+
+                if let Chunk::LocalHeader { entry_index: _ } = chunk {
+                    break;
+                }
+                if let Chunk::CDFileHeader { entry_index: _ } = chunk {
+                    break;
+                }
+            }
+
+            assert!(local_sizes[&zippity.entries[i].name] == entry_local_size);
+        }
     }
 }
