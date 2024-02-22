@@ -82,8 +82,7 @@ impl<D: EntryData> BuilderEntry<D> {
         let data = self.data.get_size();
         let data_descriptor = structs::DataDescriptor64::packed_size();
 
-        let size = local_header + zip64_extra_data + filename + data + data_descriptor;
-        size
+        local_header + zip64_extra_data + filename + data + data_descriptor
     }
 
     fn get_cd_header_size(&self, name: &str) -> u64 {
@@ -91,8 +90,7 @@ impl<D: EntryData> BuilderEntry<D> {
         let cd_entry = structs::CentralDirectoryHeader::packed_size();
         let zip64_extra_data = structs::Zip64ExtraField::packed_size();
 
-        let size = cd_entry + zip64_extra_data + filename;
-        size
+        cd_entry + zip64_extra_data + filename
     }
 }
 
@@ -109,6 +107,12 @@ pub struct Builder<D: EntryData> {
     entries: BTreeMap<String, BuilderEntry<D>>,
 }
 
+impl<D: EntryData> Default for Builder<D> {
+    fn default() -> Self {
+        Builder::new()
+    }
+}
+
 impl<D: EntryData> Builder<D> {
     pub fn new() -> Self {
         Builder {
@@ -118,8 +122,7 @@ impl<D: EntryData> Builder<D> {
 
     pub fn add_entry<T: Into<D>>(&mut self, name: String, data: T) {
         let data = data.into();
-        self.entries
-            .insert(name, BuilderEntry { data: data.into() });
+        self.entries.insert(name, BuilderEntry { data });
     }
 
     pub fn build(self) -> Reader<D> {
@@ -176,14 +179,14 @@ enum Chunk {
     FileData { entry_index: usize },
     DataDescriptor { entry_index: usize },
     CDFileHeader { entry_index: usize },
-    EOCD,
+    Eocd,
     Finished,
 }
 
 impl Chunk {
     fn new<D: EntryData>(entries: &Vec<ReaderEntry<D>>) -> Chunk {
         if entries.is_empty() {
-            Chunk::EOCD
+            Chunk::Eocd
         } else {
             Chunk::LocalHeader { entry_index: 0 }
         }
@@ -203,7 +206,7 @@ impl Chunk {
                     + entries[*entry_index].name.len() as u64
                     + structs::Zip64ExtraField::packed_size()
             }
-            Chunk::EOCD => {
+            Chunk::Eocd => {
                 structs::Zip64EndOfCentralDirectoryLocator::packed_size()
                     + structs::Zip64EndOfCentralDirectoryRecord::packed_size()
                     + structs::EndOfCentralDirectory::packed_size()
@@ -233,10 +236,10 @@ impl Chunk {
                 if entry_index < entries.len() {
                     Chunk::CDFileHeader { entry_index }
                 } else {
-                    Chunk::EOCD
+                    Chunk::Eocd
                 }
             }
-            Chunk::EOCD => Chunk::Finished,
+            Chunk::Eocd => Chunk::Finished,
             Chunk::Finished => Chunk::Finished,
         }
     }
@@ -301,18 +304,16 @@ impl ReadState {
 
         if self.to_skip > size as u64 {
             self.to_skip -= size as u64;
+        } else if (self.to_skip == 0u64) & (output.remaining() >= size) & self.buffer.is_empty() {
+            // Shortcut: Serialize directly to output
+            let output_slice = output.initialize_unfilled_to(size);
+            ps.pack_to_slice(output_slice).unwrap();
+            output.advance(size);
         } else {
-            if (self.to_skip == 0u64) & (output.remaining() >= size) & self.buffer.is_empty() {
-                // Shortcut: Serialize directly to output
-                let output_slice = output.initialize_unfilled_to(size);
-                ps.pack_to_slice(output_slice).unwrap();
-                output.advance(size);
-            } else {
-                // The general way: Pack to the buffer and it will get written some time later
-                let buf_index = self.buffer.len();
-                self.buffer.resize(buf_index + size, 0);
-                ps.pack_to_slice(&mut self.buffer[buf_index..]).unwrap();
-            }
+            // The general way: Pack to the buffer and it will get written some time later
+            let buf_index = self.buffer.len();
+            self.buffer.resize(buf_index + size, 0);
+            ps.pack_to_slice(&mut self.buffer[buf_index..]).unwrap();
         }
     }
 
@@ -324,14 +325,14 @@ impl ReadState {
 
         if self.to_skip > bytes.len() as u64 {
             self.to_skip -= bytes.len() as u64;
+        } else if (self.to_skip == 0u64)
+            & (output.remaining() >= bytes.len())
+            & self.buffer.is_empty()
+        {
+            output.put_slice(bytes);
         } else {
-            if (self.to_skip == 0u64) & (output.remaining() >= bytes.len()) & self.buffer.is_empty()
-            {
-                output.put_slice(bytes);
-            } else {
-                // The general way: Pack to the buffer and it will get written some time later
-                self.buffer.extend_from_slice(bytes);
-            }
+            // The general way: Pack to the buffer and it will get written some time later
+            self.buffer.extend_from_slice(bytes);
         }
     }
 
@@ -492,7 +493,7 @@ impl ReadState {
             structs::CentralDirectoryHeader {
                 signature: structs::CentralDirectoryHeader::SIGNATURE,
                 version_made_by: structs::VersionMadeBy {
-                    os: structs::VersionMadeByOs::UNIX,
+                    os: structs::VersionMadeByOs::Unix,
                     spec_version: ZIP64_VERSION_TO_EXTRACT as u8,
                 },
                 version_to_extract: ZIP64_VERSION_TO_EXTRACT,
@@ -539,7 +540,7 @@ impl ReadState {
                 signature: structs::Zip64EndOfCentralDirectoryRecord::SIGNATURE,
                 size_of_zip64_eocd: structs::Zip64EndOfCentralDirectoryRecord::packed_size() - 12,
                 version_made_by: structs::VersionMadeBy {
-                    os: structs::VersionMadeByOs::UNIX,
+                    os: structs::VersionMadeByOs::Unix,
                     spec_version: ZIP64_VERSION_TO_EXTRACT as u8,
                 },
                 version_to_extract: ZIP64_VERSION_TO_EXTRACT,
@@ -641,7 +642,7 @@ impl ReadState {
                     let entry_index = *entry_index;
                     self.read_cd_file_header(&entries[entry_index], output)
                 }
-                Chunk::EOCD => self.read_eocd(sizes, entries, output),
+                Chunk::Eocd => self.read_eocd(sizes, entries, output),
                 _ => panic!("Unexpected current chunk"),
             };
 
@@ -675,7 +676,7 @@ impl<D: EntryData> AsyncRead for Reader<D> {
     ) -> Poll<std::io::Result<()>> {
         let projected = self.project();
         projected.read_state.read(
-            &projected.sizes,
+            projected.sizes,
             projected.entries.as_mut_slice(),
             projected.pinned,
             ctx,
@@ -711,7 +712,7 @@ mod test {
     use super::*;
     use assert2::assert;
     use proptest::strategy::{Just, Strategy};
-    use std::{collections::HashMap, fmt::format, io::ErrorKind, ops::Range, pin::pin};
+    use std::{collections::HashMap, io::ErrorKind, ops::Range, pin::pin};
     use test_strategy::proptest;
     use zip::read::ZipArchive;
 
@@ -813,8 +814,7 @@ mod test {
         };
         let expected = &bytes[cleaned_range.clone()];
 
-        let mut buf_backing = Vec::new();
-        buf_backing.resize(range.len(), 0);
+        let mut buf_backing = vec![0; range.len()];
         let mut buf = ReadBuf::new(buf_backing.as_mut_slice());
 
         rs.read_str(&s, &mut buf);
@@ -854,8 +854,7 @@ mod test {
             range.clone()
         };
 
-        let mut buf_backing = Vec::new();
-        buf_backing.resize(range.len(), 0);
+        let mut buf_backing = vec![0; range.len()];
         let mut buf = ReadBuf::new(buf_backing.as_mut_slice());
 
         rs.read_from_buffer(&mut buf);

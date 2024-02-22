@@ -102,7 +102,7 @@ pub struct VersionMadeBy {
 #[derive(Clone, Copy, Debug, PrimitiveEnum_u8)]
 #[non_exhaustive]
 pub enum VersionMadeByOs {
-    UNIX = 3,
+    Unix = 3,
 }
 
 #[derive(Debug, PackedStruct)]
