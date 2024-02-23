@@ -24,7 +24,7 @@ pub trait EntryData {
     type Reader: AsyncRead;
     type ReaderFuture: Future<Output = Result<Self::Reader>>;
 
-    fn get_size(&self) -> u64;
+    fn size(&self) -> u64;
     fn get_reader(&self) -> Self::ReaderFuture;
 }
 
@@ -47,7 +47,7 @@ impl EntryData for () {
     type Reader = std::io::Cursor<&'static [u8]>;
     type ReaderFuture = std::future::Ready<Result<Self::Reader>>;
 
-    fn get_size(&self) -> u64 {
+    fn size(&self) -> u64 {
         0
     }
 
@@ -60,7 +60,7 @@ impl<'a> EntryData for &'a [u8] {
     type Reader = std::io::Cursor<&'a [u8]>;
     type ReaderFuture = std::future::Ready<Result<Self::Reader>>;
 
-    fn get_size(&self) -> u64 {
+    fn size(&self) -> u64 {
         self.len() as u64
     }
 
@@ -79,7 +79,7 @@ impl<D: EntryData> BuilderEntry<D> {
         let local_header = structs::LocalFileHeader::packed_size();
         let zip64_extra_data = structs::Zip64ExtraField::packed_size();
         let filename = name.len() as u64;
-        let data = self.data.get_size();
+        let data = self.data.size();
         let data_descriptor = structs::DataDescriptor64::packed_size();
 
         local_header + zip64_extra_data + filename + data + data_descriptor
@@ -199,7 +199,7 @@ impl Chunk {
                     + entries[*entry_index].name.len() as u64
                     + structs::Zip64ExtraField::packed_size()
             }
-            Chunk::FileData { entry_index } => entries[*entry_index].data.get_size(),
+            Chunk::FileData { entry_index } => entries[*entry_index].data.size(),
             Chunk::DataDescriptor { entry_index: _ } => structs::DataDescriptor64::packed_size(),
             Chunk::CDFileHeader { entry_index } => {
                 structs::CentralDirectoryHeader::packed_size()
@@ -259,8 +259,12 @@ struct ReadState {
     /// Which chunk we are currently reading
     current_chunk: Chunk,
     /// How many bytes did we already read from the current chunk.
+    /// Data in buffer counts as already processed.
+    /// Used only for verification and for error reporting on EntryData.
     chunk_processed_size: u64,
     /// Buffer for data that couldn't get written to the output directly.
+    /// Content of this will get written to output first, before any more chunk
+    /// reading is attempted.
     buffer: Vec<u8>,
     /// How many bytes must be skipped, counted from the start of the current chunk
     to_skip: u64,
@@ -284,6 +288,7 @@ pub struct Reader<D: EntryData> {
     pinned: ReaderPinned<D>,
 }
 
+#[derive(Debug)]
 struct Sizes {
     cd_offset: u64,
     cd_size: u64,
@@ -403,7 +408,7 @@ impl ReadState {
         ctx: &mut Context<'_>,
         output: &mut ReadBuf<'_>,
     ) -> Poll<Result<bool>> {
-        let expected_size = entry.data.get_size();
+        let expected_size = entry.data.size();
 
         if let ReaderPinnedProj::Nothing = pinned.as_mut().project() {
             let reader_future = entry.data.get_reader();
@@ -446,11 +451,11 @@ impl ReadState {
             if self.chunk_processed_size == expected_size {
                 Poll::Ready(Ok(true)) // We're done with this state
             } else {
-                Poll::Ready(Err(Error::other(Box::new(ZippityError::LengthMismatch {
+                Poll::Ready(Err(Error::other(ZippityError::LengthMismatch {
                     entry_name: entry.name.clone(),
                     expected_size,
                     actual_size: self.chunk_processed_size,
-                }))))
+                })))
             }
         } else {
             let written_chunk_size = remaining_before_poll - output.remaining();
@@ -474,8 +479,8 @@ impl ReadState {
             structs::DataDescriptor64 {
                 signature: structs::DataDescriptor64::SIGNATURE,
                 crc32: entry.crc32.unwrap(),
-                compressed_size: entry.data.get_size(),
-                uncompressed_size: entry.data.get_size(),
+                compressed_size: entry.data.size(),
+                uncompressed_size: entry.data.size(),
             },
             output,
         );
@@ -519,8 +524,8 @@ impl ReadState {
             structs::Zip64ExtraField {
                 tag: structs::Zip64ExtraField::TAG,
                 size: structs::Zip64ExtraField::packed_size() as u16 - 4,
-                uncompressed_size: entry.data.get_size(),
-                compressed_size: entry.data.get_size(),
+                uncompressed_size: entry.data.size(),
+                compressed_size: entry.data.size(),
                 offset: entry.offset,
             },
             output,
@@ -612,8 +617,6 @@ impl ReadState {
             }
             */
 
-            let loop_remaining = output.remaining();
-
             let chunk_done = match &mut self.current_chunk {
                 Chunk::LocalHeader { entry_index } => {
                     let entry_index = *entry_index;
@@ -646,9 +649,6 @@ impl ReadState {
                 _ => panic!("Unexpected current chunk"),
             };
 
-            let read_len = loop_remaining - output.remaining();
-
-            dbg!(read_len);
             dbg!(chunk_done);
 
             if chunk_done {
@@ -663,7 +663,8 @@ impl ReadState {
 }
 
 impl<D: EntryData> Reader<D> {
-    pub fn get_size(&self) -> u64 {
+    /// Return the total size of the file in bytes.
+    pub fn size(&self) -> u64 {
         self.sizes.total_size
     }
 }
@@ -673,7 +674,7 @@ impl<D: EntryData> AsyncRead for Reader<D> {
         self: Pin<&mut Self>,
         ctx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
+    ) -> Poll<Result<()>> {
         let projected = self.project();
         projected.read_state.read(
             projected.sizes,
@@ -686,11 +687,11 @@ impl<D: EntryData> AsyncRead for Reader<D> {
 }
 
 impl<D: EntryData> AsyncSeek for Reader<D> {
-    fn start_seek(self: Pin<&mut Self>, _position: SeekFrom) -> std::io::Result<()> {
+    fn start_seek(self: Pin<&mut Self>, _position: SeekFrom) -> Result<()> {
         todo!()
     }
 
-    fn poll_complete(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<u64>> {
+    fn poll_complete(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<u64>> {
         todo!()
     }
 }
@@ -718,10 +719,6 @@ mod test {
 
     fn content_strategy() -> impl Strategy<Value = HashMap<String, Vec<u8>>> {
         proptest::collection::hash_map(
-            // We're limiting the character set significantly, because the zip crate we use for verification
-            // does not handle unicode filenames well.
-            //r"[a-zA-Z0-91235678!@#$%^&U*/><\\\[\]]{1,20}",
-            // TODO: So far there seems to not be many problems with it...
             ".{1,20}",
             proptest::collection::vec(proptest::bits::u8::ANY, 0..100),
             0..10,
@@ -729,7 +726,7 @@ mod test {
     }
 
     #[proptest]
-    fn read_packed_struct(
+    fn read_packed_struct_works_as_expected(
         #[strategy(nonempty_range_strategy(9))] range: Range<usize>,
         nonempty_buffer: bool,
     ) {
@@ -754,12 +751,12 @@ mod test {
 
         let expected_backing = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
         let read_all = range.end >= expected_backing.len();
-        let cleaned_range = if read_all {
+        let limited_range = if read_all {
             range.start..expected_backing.len()
         } else {
             range.clone()
         };
-        let expected = &expected_backing[cleaned_range.clone()];
+        let expected = &expected_backing[limited_range.clone()];
 
         let mut buf_backing = [0; 9];
         let mut buf = ReadBuf::new(&mut buf_backing[..range.len()]);
@@ -783,9 +780,9 @@ mod test {
     }
 
     #[proptest]
-    fn read_str(
+    fn read_str_works_as_expected(
         #[strategy(".*".prop_flat_map(|s| {
-            let len = s.bytes().len();
+            let len = s.len();
             (Just(s), nonempty_range_strategy(len + 1))
         }))]
         s_and_range: (String, Range<usize>),
@@ -807,12 +804,12 @@ mod test {
         };
 
         let read_all = range.end >= bytes.len();
-        let cleaned_range = if read_all {
+        let limited_range = if read_all {
             range.start..bytes.len()
         } else {
             range.clone()
         };
-        let expected = &bytes[cleaned_range.clone()];
+        let expected = &bytes[limited_range.clone()];
 
         let mut buf_backing = vec![0; range.len()];
         let mut buf = ReadBuf::new(buf_backing.as_mut_slice());
@@ -824,14 +821,14 @@ mod test {
         } else {
             let start = rs.to_skip + if nonempty_buffer { 1 } else { 0 };
             assert!(
-                &rs.buffer[(start as usize)..(start as usize + cleaned_range.len())] == expected
+                &rs.buffer[(start as usize)..(start as usize + limited_range.len())] == expected
             );
             assert!(buf.filled().is_empty());
         }
     }
 
     #[proptest]
-    fn read_from_buffer(
+    fn read_from_buffer_works_as_expected(
         #[strategy(proptest::collection::vec(proptest::bits::u8::ANY, 1..1000).prop_flat_map(|v| {
             let len = v.len();
             (Just(v), nonempty_range_strategy(len + 1))
@@ -848,7 +845,7 @@ mod test {
         };
 
         let read_all = range.end >= rs.buffer.len();
-        let cleaned_range = if read_all {
+        let limited_range = if read_all {
             range.start..rs.buffer.len()
         } else {
             range.clone()
@@ -859,13 +856,13 @@ mod test {
 
         rs.read_from_buffer(&mut buf);
 
-        assert!(buf.filled() == &v[cleaned_range]);
+        assert!(buf.filled() == &v[limited_range]);
     }
 
     #[proptest]
-    fn test_empty_archive(#[strategy(read_size_strategy())] read_size: usize) {
+    fn empty_archive_can_be_unzipped(#[strategy(read_size_strategy())] read_size: usize) {
         let zippity = pin!(Builder::<()>::new().build());
-        let size = zippity.get_size();
+        let size = zippity.size();
 
         let buf = unasync(read_to_vec(zippity, read_size)).unwrap();
 
@@ -876,7 +873,7 @@ mod test {
     }
 
     #[proptest]
-    fn test_unzip_with_data(
+    fn result_can_be_unzipped(
         #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
         #[strategy(read_size_strategy())] read_size: usize,
     ) {
@@ -887,7 +884,7 @@ mod test {
         });
 
         let zippity = pin!(builder.build());
-        let size = zippity.get_size();
+        let size = zippity.size();
 
         let buf = unasync(read_to_vec(zippity, read_size)).unwrap();
 
@@ -911,14 +908,14 @@ mod test {
     }
 
     #[test]
-    fn bad_size() {
+    fn bad_size_entry_data_errors_out() {
         /// Struct that reports data size 100, but actually its 1
         struct BadSize();
         impl EntryData for BadSize {
             type Reader = std::io::Cursor<&'static [u8]>;
             type ReaderFuture = std::future::Ready<Result<Self::Reader>>;
 
-            fn get_size(&self) -> u64 {
+            fn size(&self) -> u64 {
                 100
             }
 
@@ -939,6 +936,8 @@ mod test {
         assert!(message.contains("xxx"));
     }
 
+    /// Tests an internal property of the builder -- that the sizes generated
+    /// during building actually match the chunk size.
     #[proptest]
     fn local_size_matches_chunks(
         #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
