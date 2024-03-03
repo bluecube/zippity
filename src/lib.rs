@@ -304,41 +304,44 @@ impl ReadState {
     where
         P: PackedStruct,
     {
-        let size = P::packed_size() as usize;
-        self.chunk_processed_size += size as u64;
+        let size64 = P::packed_size();
+        let size = size64 as usize;
+        self.chunk_processed_size += size64;
 
-        if self.to_skip > size as u64 {
-            self.to_skip -= size as u64;
-        } else if (self.to_skip == 0u64) & (output.remaining() >= size) & self.buffer.is_empty() {
-            // Shortcut: Serialize directly to output
-            let output_slice = output.initialize_unfilled_to(size);
-            ps.pack_to_slice(output_slice).unwrap();
-            output.advance(size);
-        } else {
-            // The general way: Pack to the buffer and it will get written some time later
-            let buf_index = self.buffer.len();
-            self.buffer.resize(buf_index + size, 0);
-            ps.pack_to_slice(&mut self.buffer[buf_index..]).unwrap();
+        if self.buffer.is_empty() {
+            if self.to_skip >= size64 {
+                self.to_skip -= size64;
+                return;
+            } else if (self.to_skip == 0u64) & (output.remaining() >= size) {
+                let output_slice = output.initialize_unfilled_to(size);
+                ps.pack_to_slice(output_slice).unwrap();
+                output.advance(size);
+                return;
+            }
         }
+
+        let buf_index = self.buffer.len();
+        self.buffer.resize(buf_index + size, 0);
+        ps.pack_to_slice(&mut self.buffer[buf_index..]).unwrap();
     }
 
     /// Read string slice to the output or to the buffer
     /// Never writes to output, if buffer is non empty, or if we need to skip something
     fn read_str(&mut self, s: &str, output: &mut ReadBuf<'_>) {
         let bytes = s.as_bytes();
-        self.chunk_processed_size += bytes.len() as u64;
+        let len64 = bytes.len() as u64;
+        self.chunk_processed_size += len64;
 
-        if self.to_skip > bytes.len() as u64 {
-            self.to_skip -= bytes.len() as u64;
-        } else if (self.to_skip == 0u64)
-            & (output.remaining() >= bytes.len())
-            & self.buffer.is_empty()
-        {
-            output.put_slice(bytes);
-        } else {
-            // The general way: Pack to the buffer and it will get written some time later
-            self.buffer.extend_from_slice(bytes);
+        if self.buffer.is_empty() {
+            if self.to_skip >= len64 {
+                self.to_skip -= len64;
+                return;
+            } else if (self.to_skip == 0u64) & (output.remaining() >= bytes.len()) {
+                output.put_slice(bytes);
+                return;
+            }
         }
+        self.buffer.extend_from_slice(bytes);
     }
 
     /// Read from the buffer to output
@@ -720,111 +723,336 @@ mod test {
     fn content_strategy() -> impl Strategy<Value = HashMap<String, Vec<u8>>> {
         proptest::collection::hash_map(
             ".{1,20}",
-            proptest::collection::vec(proptest::bits::u8::ANY, 0..100),
+            (0..100).prop_map(|l| (0..l).map(|v| (v & 0xff) as u8).collect()),
+            //proptest::collection::vec(proptest::bits::u8::ANY, 0..100),
             0..10,
         )
     }
 
-    #[proptest]
-    fn read_packed_struct_works_as_expected(
-        #[strategy(nonempty_range_strategy(9))] range: Range<usize>,
-        nonempty_buffer: bool,
-    ) {
-        // TODO: I hate this test, although it seems to work well. It's too complicated and hard to understand.
-        use packed_struct::prelude::*;
-        #[derive(Debug, PackedStruct)]
-        #[packed_struct(endian = "msb")]
-        struct TestPs {
-            v: u64,
-        }
+    use packed_struct::prelude::*;
+    #[derive(Debug, PackedStruct)]
+    #[packed_struct(endian = "msb")]
+    struct TestPs {
+        v: u64,
+    }
 
-        let mut rs = ReadState {
-            current_chunk: Chunk::Finished,
-            chunk_processed_size: 0,
-            buffer: if nonempty_buffer {
-                vec![0xaa]
-            } else {
-                Vec::new()
-            },
-            to_skip: range.start as u64,
-        };
-
-        let expected_backing = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
-        let read_all = range.end >= expected_backing.len();
-        let limited_range = if read_all {
-            range.start..expected_backing.len()
-        } else {
-            range.clone()
-        };
-        let expected = &expected_backing[limited_range.clone()];
-
-        let mut buf_backing = [0; 9];
-        let mut buf = ReadBuf::new(&mut buf_backing[..range.len()]);
-
-        rs.read_packed_struct(
+    impl TestPs {
+        fn new() -> TestPs {
             TestPs {
                 v: 0x0102030405060708,
-            },
-            &mut buf,
-        );
-
-        if rs.buffer.is_empty() {
-            assert!(buf.filled() == expected);
-        } else {
-            let start = rs.to_skip + if nonempty_buffer { 1 } else { 0 };
-            assert!(
-                &rs.buffer[(start as usize)..(start as usize + cleaned_range.len())] == expected
-            );
-            assert!(buf.filled().is_empty());
+            }
         }
     }
 
     #[proptest]
-    fn read_str_works_as_expected(
-        #[strategy(".*".prop_flat_map(|s| {
-            let len = s.len();
-            (Just(s), nonempty_range_strategy(len + 1))
-        }))]
-        s_and_range: (String, Range<usize>),
-        nonempty_buffer: bool,
+    fn read_packed_struct_direct_write(
+        #[strategy(proptest::collection::vec(proptest::bits::u8::ANY, 0..10))]
+        initial_output_content: Vec<u8>,
+        #[strategy(0usize..20usize)] output_buffer_extra_size: usize,
     ) {
-        // TODO: I hate this test, although it seems to work well. It's too complicated and hard to understand.
-        let (s, range) = s_and_range;
-
-        let bytes = s.as_bytes();
         let mut rs = ReadState {
             current_chunk: Chunk::Finished,
             chunk_processed_size: 0,
-            buffer: if nonempty_buffer {
-                vec![0xaa]
-            } else {
-                Vec::new()
-            },
-            to_skip: range.start as u64,
+            buffer: Vec::new(),
+            to_skip: 0,
         };
 
-        let read_all = range.end >= bytes.len();
-        let limited_range = if read_all {
-            range.start..bytes.len()
-        } else {
-            range.clone()
-        };
-        let expected = &bytes[limited_range.clone()];
-
-        let mut buf_backing = vec![0; range.len()];
+        let mut buf_backing = Vec::new();
+        buf_backing.resize(
+            initial_output_content.len() + output_buffer_extra_size + 8,
+            0,
+        );
         let mut buf = ReadBuf::new(buf_backing.as_mut_slice());
+        buf.put_slice(initial_output_content.as_slice());
 
-        rs.read_str(&s, &mut buf);
+        assert!(
+            buf.remaining() >= 8,
+            "Test construction: There must be enough room for the whole output"
+        );
+        rs.read_packed_struct(TestPs::new(), &mut buf);
 
-        if rs.buffer.is_empty() {
-            assert!(buf.filled() == expected);
-        } else {
-            let start = rs.to_skip + if nonempty_buffer { 1 } else { 0 };
-            assert!(
-                &rs.buffer[(start as usize)..(start as usize + limited_range.len())] == expected
-            );
-            assert!(buf.filled().is_empty());
-        }
+        assert!(
+            &buf.filled()[..initial_output_content.len()] == initial_output_content.as_slice(),
+            "Must not touch what was in the buffer before"
+        );
+        assert!(
+            &buf.filled()[initial_output_content.len()..]
+                == &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
+            "Must write the whole struct to output"
+        );
+    }
+
+    #[proptest]
+    fn read_packed_struct_skip_all(
+        #[strategy(proptest::collection::vec(proptest::bits::u8::ANY, 0..10))]
+        initial_output_content: Vec<u8>,
+        #[strategy(0usize..20usize)] output_buffer_extra_size: usize,
+        #[strategy(8u64..100u64)] to_skip: u64,
+    ) {
+        let mut rs = ReadState {
+            current_chunk: Chunk::Finished,
+            chunk_processed_size: 0,
+            buffer: Vec::new(),
+            to_skip,
+        };
+
+        let mut buf_backing = Vec::new();
+        buf_backing.resize(initial_output_content.len() + output_buffer_extra_size, 0);
+        let mut buf = ReadBuf::new(buf_backing.as_mut_slice());
+        buf.put_slice(initial_output_content.as_slice());
+
+        rs.read_packed_struct(TestPs::new(), &mut buf);
+
+        assert!(
+            buf.filled() == initial_output_content.as_slice(),
+            "Must not touch what was in the buffer before"
+        );
+        assert!(rs.to_skip == to_skip - 8, "Must decrease amount to skip");
+    }
+
+    #[proptest]
+    fn read_packed_struct_skip_partial(
+        #[strategy(proptest::collection::vec(proptest::bits::u8::ANY, 0..10))]
+        initial_output_content: Vec<u8>,
+        #[strategy(0usize..20usize)] output_buffer_extra_size: usize,
+        #[strategy(1u64..8u64)] to_skip: u64,
+    ) {
+        let mut rs = ReadState {
+            current_chunk: Chunk::Finished,
+            chunk_processed_size: 0,
+            buffer: Vec::new(),
+            to_skip,
+        };
+
+        let mut buf_backing = Vec::new();
+        buf_backing.resize(
+            initial_output_content.len() + output_buffer_extra_size + 1, // Always have room for at least 1 byte to read
+            0,
+        );
+        let mut buf = ReadBuf::new(buf_backing.as_mut_slice());
+        buf.put_slice(initial_output_content.as_slice());
+
+        rs.read_packed_struct(TestPs::new(), &mut buf);
+
+        assert!(
+            buf.filled() == initial_output_content.as_slice(),
+            "Must not touch what was in the buffer before"
+        );
+        assert!(
+            rs.to_skip == to_skip,
+            "Must not change how much there was to skip"
+        );
+        assert!(
+            rs.buffer.as_slice() == &[1, 2, 3, 4, 5, 6, 7, 8],
+            "Must copy the whole structure to buffer"
+        );
+    }
+
+    #[proptest]
+    fn read_packed_struct_nonempty_buffer(
+        #[strategy(proptest::collection::vec(proptest::bits::u8::ANY, 1..10))]
+        initial_buffer_content: Vec<u8>,
+        #[strategy(proptest::collection::vec(proptest::bits::u8::ANY, 0..10))]
+        initial_output_content: Vec<u8>,
+        #[strategy(0usize..20usize)] output_buffer_extra_size: usize,
+        #[strategy(0f64..=1f64)] to_skip_f: f64,
+    ) {
+        let to_skip = (initial_buffer_content.len() as f64 * to_skip_f) as u64;
+        let mut rs = ReadState {
+            current_chunk: Chunk::Finished,
+            chunk_processed_size: 0,
+            buffer: initial_buffer_content.clone(),
+            to_skip,
+        };
+
+        let mut buf_backing = Vec::new();
+        buf_backing.resize(
+            initial_output_content.len() + output_buffer_extra_size + 1, // Always have room for at least 1 byte to read
+            0,
+        );
+        let mut buf = ReadBuf::new(buf_backing.as_mut_slice());
+        buf.put_slice(initial_output_content.as_slice());
+
+        rs.read_packed_struct(TestPs::new(), &mut buf);
+
+        assert!(
+            buf.filled() == initial_output_content.as_slice(),
+            "Must not touch what was in the buffer before"
+        );
+        assert!(
+            rs.to_skip == to_skip,
+            "Must not change how much there was to skip"
+        );
+        assert!(
+            &rs.buffer[..initial_buffer_content.len()] == initial_buffer_content.as_slice(),
+            "Must not modify the initial content of the buffer"
+        );
+        assert!(
+            &rs.buffer[initial_buffer_content.len()..] == [1, 2, 3, 4, 5, 6, 7, 8],
+            "Must append the packed structure to buffer"
+        );
+    }
+
+    #[proptest]
+    fn read_str_direct_write(
+        #[strategy(".*")] test_data: String,
+        #[strategy(proptest::collection::vec(proptest::bits::u8::ANY, 0..10))]
+        initial_output_content: Vec<u8>,
+        #[strategy(0usize..20usize)] output_buffer_extra_size: usize,
+    ) {
+        let mut rs = ReadState {
+            current_chunk: Chunk::Finished,
+            chunk_processed_size: 0,
+            buffer: Vec::new(),
+            to_skip: 0,
+        };
+
+        let mut buf_backing = Vec::new();
+        buf_backing.resize(
+            initial_output_content.len() + output_buffer_extra_size + test_data.len(),
+            0,
+        );
+        let mut buf = ReadBuf::new(buf_backing.as_mut_slice());
+        buf.put_slice(initial_output_content.as_slice());
+
+        assert!(
+            buf.remaining() >= test_data.len(),
+            "Test construction: There must be enough room for the whole output"
+        );
+        rs.read_str(&test_data, &mut buf);
+
+        assert!(
+            &buf.filled()[..initial_output_content.len()] == initial_output_content.as_slice(),
+            "Must not touch what was in the buffer before"
+        );
+        assert!(
+            &buf.filled()[initial_output_content.len()..] == test_data.as_bytes(),
+            "Must write the whole string to output"
+        );
+    }
+
+    #[proptest]
+    fn read_str_skip_all(
+        #[strategy(".*")] test_data: String,
+        #[strategy(proptest::collection::vec(proptest::bits::u8::ANY, 0..10))]
+        initial_output_content: Vec<u8>,
+        #[strategy(0usize..20usize)] output_buffer_extra_size: usize,
+        #[strategy(0u64..100u64)] to_skip_extra: u64,
+    ) {
+        let to_skip = test_data.len() as u64 + to_skip_extra;
+        let mut rs = ReadState {
+            current_chunk: Chunk::Finished,
+            chunk_processed_size: 0,
+            buffer: Vec::new(),
+            to_skip,
+        };
+
+        let mut buf_backing = Vec::new();
+        buf_backing.resize(initial_output_content.len() + output_buffer_extra_size, 0);
+        let mut buf = ReadBuf::new(buf_backing.as_mut_slice());
+        buf.put_slice(initial_output_content.as_slice());
+
+        rs.read_str(&test_data, &mut buf);
+
+        assert!(
+            buf.filled() == initial_output_content.as_slice(),
+            "Must not touch what was in the buffer before"
+        );
+        assert!(rs.to_skip == to_skip_extra, "Must decrease amount to skip");
+    }
+
+    #[proptest]
+    fn read_str_skip_partial(
+        #[strategy("...*")] test_data: String, // At least two characters
+        #[strategy(proptest::collection::vec(proptest::bits::u8::ANY, 0..10))]
+        initial_output_content: Vec<u8>,
+        #[strategy(0usize..20usize)] output_buffer_extra_size: usize,
+        #[strategy(0f64..1f64)] to_skip_f: f64,
+    ) {
+        let to_skip = 1 + ((test_data.len() - 2) as f64 * to_skip_f) as u64;
+        assert!(
+            to_skip > 0,
+            "Test construction: We always must skip at least 1 byte"
+        );
+        assert!(
+            to_skip < test_data.len() as u64,
+            "Test construction: We always must leave at least 1 byte to write"
+        );
+        let mut rs = ReadState {
+            current_chunk: Chunk::Finished,
+            chunk_processed_size: 0,
+            buffer: Vec::new(),
+            to_skip,
+        };
+
+        let mut buf_backing = Vec::new();
+        buf_backing.resize(
+            initial_output_content.len() + output_buffer_extra_size + 1, // Always have room for at least 1 byte to read
+            0,
+        );
+        let mut buf = ReadBuf::new(buf_backing.as_mut_slice());
+        buf.put_slice(initial_output_content.as_slice());
+
+        rs.read_str(&test_data, &mut buf);
+
+        assert!(
+            buf.filled() == initial_output_content.as_slice(),
+            "Must not touch what was in the buffer before"
+        );
+        assert!(
+            rs.to_skip == to_skip,
+            "Must not change how much there was to skip"
+        );
+        assert!(
+            rs.buffer.as_slice() == test_data.as_bytes(),
+            "Must copy the whole string to buffer"
+        );
+    }
+
+    #[proptest]
+    fn read_str_nonempty_buffer(
+        #[strategy(".*")] test_data: String,
+        #[strategy(proptest::collection::vec(proptest::bits::u8::ANY, 1..10))]
+        initial_buffer_content: Vec<u8>,
+        #[strategy(proptest::collection::vec(proptest::bits::u8::ANY, 0..10))]
+        initial_output_content: Vec<u8>,
+        #[strategy(0usize..20usize)] output_buffer_extra_size: usize,
+        #[strategy(0f64..=1f64)] to_skip_f: f64,
+    ) {
+        let to_skip = (initial_buffer_content.len() as f64 * to_skip_f) as u64;
+        let mut rs = ReadState {
+            current_chunk: Chunk::Finished,
+            chunk_processed_size: 0,
+            buffer: initial_buffer_content.clone(),
+            to_skip,
+        };
+
+        let mut buf_backing = Vec::new();
+        buf_backing.resize(
+            initial_output_content.len() + output_buffer_extra_size + 1, // Always have room for at least 1 byte to read
+            0,
+        );
+        let mut buf = ReadBuf::new(buf_backing.as_mut_slice());
+        buf.put_slice(initial_output_content.as_slice());
+
+        rs.read_str(&test_data, &mut buf);
+
+        assert!(
+            buf.filled() == initial_output_content.as_slice(),
+            "Must not touch what was in the buffer before"
+        );
+        assert!(
+            rs.to_skip == to_skip,
+            "Must not change how much there was to skip"
+        );
+        assert!(
+            &rs.buffer[..initial_buffer_content.len()] == initial_buffer_content.as_slice(),
+            "Must not modify the initial content of the buffer"
+        );
+        assert!(
+            &rs.buffer[initial_buffer_content.len()..] == test_data.as_bytes(),
+            "Must append the packed structure to buffer"
+        );
     }
 
     #[proptest]
