@@ -165,7 +165,7 @@ impl<D: EntryData> Builder<D> {
             read_state: ReadState {
                 current_chunk,
                 chunk_processed_size: 0,
-                buffer: Vec::new(),
+                staging_buffer: Vec::new(),
                 to_skip: 0,
             },
             pinned: ReaderPinned::Nothing,
@@ -259,13 +259,13 @@ struct ReadState {
     /// Which chunk we are currently reading
     current_chunk: Chunk,
     /// How many bytes did we already read from the current chunk.
-    /// Data in buffer counts as already processed.
+    /// Data in staging buffer counts as already processed.
     /// Used only for verification and for error reporting on EntryData.
     chunk_processed_size: u64,
     /// Buffer for data that couldn't get written to the output directly.
     /// Content of this will get written to output first, before any more chunk
     /// reading is attempted.
-    buffer: Vec<u8>,
+    staging_buffer: Vec<u8>,
     /// How many bytes must be skipped, counted from the start of the current chunk
     to_skip: u64,
 }
@@ -298,8 +298,8 @@ struct Sizes {
 
 impl ReadState {
     /// Read packed struct.
-    /// Either reads to `output` (fast path), or to `self.buffer`
-    /// Never writes to output, if buffer is non empty, or if we need to skip something
+    /// Either reads to `output` (fast path), or to `self.staging_buffer`
+    /// Never writes to output, if staging buffer is non empty, or if we need to skip something
     fn read_packed_struct<P>(&mut self, ps: P, output: &mut ReadBuf<'_>)
     where
         P: PackedStruct,
@@ -308,7 +308,7 @@ impl ReadState {
         let size = size64 as usize;
         self.chunk_processed_size += size64;
 
-        if self.buffer.is_empty() {
+        if self.staging_buffer.is_empty() {
             if self.to_skip >= size64 {
                 self.to_skip -= size64;
                 return;
@@ -320,19 +320,20 @@ impl ReadState {
             }
         }
 
-        let buf_index = self.buffer.len();
-        self.buffer.resize(buf_index + size, 0);
-        ps.pack_to_slice(&mut self.buffer[buf_index..]).unwrap();
+        let buf_index = self.staging_buffer.len();
+        self.staging_buffer.resize(buf_index + size, 0);
+        ps.pack_to_slice(&mut self.staging_buffer[buf_index..])
+            .unwrap();
     }
 
-    /// Read string slice to the output or to the buffer
-    /// Never writes to output, if buffer is non empty, or if we need to skip something
+    /// Read string slice to the output or to the staging buffer
+    /// Never writes to output, if staging buffer is non empty, or if we need to skip something
     fn read_str(&mut self, s: &str, output: &mut ReadBuf<'_>) {
         let bytes = s.as_bytes();
         let len64 = bytes.len() as u64;
         self.chunk_processed_size += len64;
 
-        if self.buffer.is_empty() {
+        if self.staging_buffer.is_empty() {
             if self.to_skip >= len64 {
                 self.to_skip -= len64;
                 return;
@@ -341,26 +342,27 @@ impl ReadState {
                 return;
             }
         }
-        self.buffer.extend_from_slice(bytes);
+        self.staging_buffer.extend_from_slice(bytes);
     }
 
-    /// Read from the buffer to output
-    fn read_from_buffer(&mut self, output: &mut ReadBuf<'_>) {
+    /// Read from the staging buffer to output
+    fn read_from_staging(&mut self, output: &mut ReadBuf<'_>) {
         let start = self.to_skip as usize;
         let end = start + output.remaining();
-        let last_read = end >= self.buffer.len();
-        let end = if last_read { self.buffer.len() } else { end };
+        let last_read = end >= self.staging_buffer.len();
+        let end = if last_read {
+            self.staging_buffer.len()
+        } else {
+            end
+        };
 
-        if start < self.buffer.len() {
-            // Most of the time (always in normal code?) the branch should be taken, because otherwise there's no
-            // point in putting anything in the buffer in the first place.
-            // Hovewer including it makes this function more robust and easier to test.
-            output.put_slice(&self.buffer[start..end]);
+        if start < self.staging_buffer.len() {
+            output.put_slice(&self.staging_buffer[start..end]);
         }
 
         if last_read {
             self.to_skip = 0;
-            self.buffer.clear();
+            self.staging_buffer.clear();
         } else {
             self.to_skip = end as u64;
         }
@@ -599,8 +601,10 @@ impl ReadState {
 
         println!();
         while output.remaining() > 0 {
-            if !self.buffer.is_empty() {
-                self.read_from_buffer(output);
+            if !self.staging_buffer.is_empty() {
+                println!("Read from staging buffer");
+                dbg!(self.staging_buffer.len());
+                self.read_from_staging(output);
                 continue;
             }
 
@@ -628,8 +632,9 @@ impl ReadState {
                 Chunk::FileData { entry_index } => {
                     let entry_index = *entry_index;
                     if output.remaining() != initial_remaining {
-                        // We have already written something into the buffer -> interrupt this call, because
+                        // We have already written something into the output -> interrupt this call, because
                         // we might need to return Pending when reading the file data
+                        // TODO: Make sure that there is nothing in the staging buffer as well?
                         return Poll::Ready(Ok(()));
                     }
                     let read_result = self.read_file_data(
@@ -753,7 +758,7 @@ mod test {
         let mut rs = ReadState {
             current_chunk: Chunk::Finished,
             chunk_processed_size: 0,
-            buffer: Vec::new(),
+            staging_buffer: Vec::new(),
             to_skip: 0,
         };
 
@@ -792,7 +797,7 @@ mod test {
         let mut rs = ReadState {
             current_chunk: Chunk::Finished,
             chunk_processed_size: 0,
-            buffer: Vec::new(),
+            staging_buffer: Vec::new(),
             to_skip,
         };
 
@@ -820,7 +825,7 @@ mod test {
         let mut rs = ReadState {
             current_chunk: Chunk::Finished,
             chunk_processed_size: 0,
-            buffer: Vec::new(),
+            staging_buffer: Vec::new(),
             to_skip,
         };
 
@@ -843,7 +848,7 @@ mod test {
             "Must not change how much there was to skip"
         );
         assert!(
-            rs.buffer.as_slice() == &[1, 2, 3, 4, 5, 6, 7, 8],
+            rs.staging_buffer.as_slice() == &[1, 2, 3, 4, 5, 6, 7, 8],
             "Must copy the whole structure to buffer"
         );
     }
@@ -861,7 +866,7 @@ mod test {
         let mut rs = ReadState {
             current_chunk: Chunk::Finished,
             chunk_processed_size: 0,
-            buffer: initial_buffer_content.clone(),
+            staging_buffer: initial_buffer_content.clone(),
             to_skip,
         };
 
@@ -884,11 +889,11 @@ mod test {
             "Must not change how much there was to skip"
         );
         assert!(
-            &rs.buffer[..initial_buffer_content.len()] == initial_buffer_content.as_slice(),
+            &rs.staging_buffer[..initial_buffer_content.len()] == initial_buffer_content.as_slice(),
             "Must not modify the initial content of the buffer"
         );
         assert!(
-            &rs.buffer[initial_buffer_content.len()..] == [1, 2, 3, 4, 5, 6, 7, 8],
+            &rs.staging_buffer[initial_buffer_content.len()..] == [1, 2, 3, 4, 5, 6, 7, 8],
             "Must append the packed structure to buffer"
         );
     }
@@ -903,7 +908,7 @@ mod test {
         let mut rs = ReadState {
             current_chunk: Chunk::Finished,
             chunk_processed_size: 0,
-            buffer: Vec::new(),
+            staging_buffer: Vec::new(),
             to_skip: 0,
         };
 
@@ -943,7 +948,7 @@ mod test {
         let mut rs = ReadState {
             current_chunk: Chunk::Finished,
             chunk_processed_size: 0,
-            buffer: Vec::new(),
+            staging_buffer: Vec::new(),
             to_skip,
         };
 
@@ -981,7 +986,7 @@ mod test {
         let mut rs = ReadState {
             current_chunk: Chunk::Finished,
             chunk_processed_size: 0,
-            buffer: Vec::new(),
+            staging_buffer: Vec::new(),
             to_skip,
         };
 
@@ -1004,7 +1009,7 @@ mod test {
             "Must not change how much there was to skip"
         );
         assert!(
-            rs.buffer.as_slice() == test_data.as_bytes(),
+            rs.staging_buffer.as_slice() == test_data.as_bytes(),
             "Must copy the whole string to buffer"
         );
     }
@@ -1023,7 +1028,7 @@ mod test {
         let mut rs = ReadState {
             current_chunk: Chunk::Finished,
             chunk_processed_size: 0,
-            buffer: initial_buffer_content.clone(),
+            staging_buffer: initial_buffer_content.clone(),
             to_skip,
         };
 
@@ -1046,17 +1051,17 @@ mod test {
             "Must not change how much there was to skip"
         );
         assert!(
-            &rs.buffer[..initial_buffer_content.len()] == initial_buffer_content.as_slice(),
+            &rs.staging_buffer[..initial_buffer_content.len()] == initial_buffer_content.as_slice(),
             "Must not modify the initial content of the buffer"
         );
         assert!(
-            &rs.buffer[initial_buffer_content.len()..] == test_data.as_bytes(),
+            &rs.staging_buffer[initial_buffer_content.len()..] == test_data.as_bytes(),
             "Must append the packed structure to buffer"
         );
     }
 
     #[proptest]
-    fn read_from_buffer_works_as_expected(
+    fn read_from_staging_works_as_expected(
         #[strategy(proptest::collection::vec(proptest::bits::u8::ANY, 1..100))] test_data: Vec<u8>,
         #[strategy(proptest::collection::vec(proptest::bits::u8::ANY, 0..10))]
         initial_output_content: Vec<u8>,
@@ -1066,9 +1071,8 @@ mod test {
         let mut rs = ReadState {
             current_chunk: Chunk::Finished,
             chunk_processed_size: 0,
-            buffer: test_data.clone(),
+            staging_buffer: test_data.clone(),
             to_skip,
-            position: 0,
         };
 
         // Calculate range in test data that will be added to the output.
@@ -1080,24 +1084,24 @@ mod test {
         let mut buf = ReadBuf::new(buf_backing.as_mut_slice());
         buf.put_slice(initial_output_content.as_slice());
 
-        rs.read_from_buffer(&mut buf);
+        rs.read_from_staging(&mut buf);
 
         assert!(
             &buf.filled()[..initial_output_content.len()] == initial_output_content.as_slice(),
-            "Must not touch what was in the buffer before"
+            "Must not touch what was in the staging buffer before"
         );
         assert!(
             &buf.filled()[initial_output_content.len()..] == &test_data[start..stop],
-            "Must write the content of the buffer minus the skipped data to buffer"
+            "Must write the content of the staging buffer minus the skipped data to output"
         );
         if stop >= test_data.len() {
             assert!(
-                rs.buffer.len() == 0,
-                "Must clear the buffer if all data was read"
+                rs.staging_buffer.len() == 0,
+                "Must clear the staging buffer if all data was read"
             );
         } else {
-            assert!(&rs.buffer[rs.to_skip as usize..] == &test_data[stop..],
-            "What remains in the buffer after the skip must be what we didn't write from the test data");
+            assert!(&rs.staging_buffer[rs.to_skip as usize..] == &test_data[stop..],
+            "What remains in the staging buffer after the skip must be what we didn't write from the test data");
         }
     }
 
