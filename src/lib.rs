@@ -1057,34 +1057,48 @@ mod test {
 
     #[proptest]
     fn read_from_buffer_works_as_expected(
-        #[strategy(proptest::collection::vec(proptest::bits::u8::ANY, 1..1000).prop_flat_map(|v| {
-            let len = v.len();
-            (Just(v), nonempty_range_strategy(len + 1))
-        }))]
-        v_and_range: (Vec<u8>, Range<usize>),
+        #[strategy(proptest::collection::vec(proptest::bits::u8::ANY, 1..100))] test_data: Vec<u8>,
+        #[strategy(proptest::collection::vec(proptest::bits::u8::ANY, 0..10))]
+        initial_output_content: Vec<u8>,
+        #[strategy(1u64..100u64)] to_skip: u64,
+        #[strategy(1usize..100usize)] read_size: usize,
     ) {
-        let (v, range) = v_and_range;
-
         let mut rs = ReadState {
             current_chunk: Chunk::Finished,
             chunk_processed_size: 0,
-            buffer: v.clone(),
-            to_skip: range.start as u64,
+            buffer: test_data.clone(),
+            to_skip,
+            position: 0,
         };
 
-        let read_all = range.end >= rs.buffer.len();
-        let limited_range = if read_all {
-            range.start..rs.buffer.len()
-        } else {
-            range.clone()
-        };
+        // Calculate range in test data that will be added to the output.
+        let start = to_skip as usize;
+        let stop = (start + read_size).min(test_data.len());
+        let start = start.min(stop);
 
-        let mut buf_backing = vec![0; range.len()];
+        let mut buf_backing = vec![0; initial_output_content.len() + read_size];
         let mut buf = ReadBuf::new(buf_backing.as_mut_slice());
+        buf.put_slice(initial_output_content.as_slice());
 
         rs.read_from_buffer(&mut buf);
 
-        assert!(buf.filled() == &v[limited_range]);
+        assert!(
+            &buf.filled()[..initial_output_content.len()] == initial_output_content.as_slice(),
+            "Must not touch what was in the buffer before"
+        );
+        assert!(
+            &buf.filled()[initial_output_content.len()..] == &test_data[start..stop],
+            "Must write the content of the buffer minus the skipped data to buffer"
+        );
+        if stop >= test_data.len() {
+            assert!(
+                rs.buffer.len() == 0,
+                "Must clear the buffer if all data was read"
+            );
+        } else {
+            assert!(&rs.buffer[rs.to_skip as usize..] == &test_data[stop..],
+            "What remains in the buffer after the skip must be what we didn't write from the test data");
+        }
     }
 
     #[proptest]
