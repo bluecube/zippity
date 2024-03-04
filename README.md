@@ -9,7 +9,7 @@ A library for creating a ZIP file on the fly. Currently work in progress.
 - [x] Supports Zip64 (files > 4GB).
 - [x] Simple API
 - [ ] Allows seeking in the file
-- [ ] File size is known in advance
+- [x] File size is known in advance
 
 ## Non-features
 - Compression: The zip only uses store method.
