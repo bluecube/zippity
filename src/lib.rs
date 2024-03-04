@@ -184,7 +184,7 @@ enum Chunk {
 }
 
 impl Chunk {
-    fn new<D: EntryData>(entries: &Vec<ReaderEntry<D>>) -> Chunk {
+    fn new<D: EntryData>(entries: &[ReaderEntry<D>]) -> Chunk {
         if entries.is_empty() {
             Chunk::Eocd
         } else {
