@@ -1,6 +1,5 @@
 use assert2::assert;
 use crc_reader::CrcReader;
-use lru::LruCache;
 use packed_struct::{PackedStruct, PackedStructSlice};
 use pin_project::pin_project;
 use std::collections::BTreeMap;
@@ -26,21 +25,6 @@ pub trait EntryData {
 
     fn size(&self) -> u64;
     fn get_reader(&self) -> Self::ReaderFuture;
-}
-
-#[derive(Debug, Hash, Clone, PartialEq, Eq)]
-struct CrcCacheKey {}
-
-pub struct CrcCache(LruCache<CrcCacheKey, u32>);
-
-impl CrcCache {
-    pub fn new(limit: NonZeroUsize) -> Self {
-        CrcCache(LruCache::new(limit))
-    }
-
-    pub fn unbounded() -> Self {
-        CrcCache(LruCache::unbounded())
-    }
 }
 
 impl EntryData for () {
