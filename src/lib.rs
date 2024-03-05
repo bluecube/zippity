@@ -700,16 +700,15 @@ pub enum ZippityError {
 
 #[cfg(test)]
 mod test {
-    use crate::test_util::{
-        measure_size, nonempty_range_strategy, read_size_strategy, read_to_vec, unasync,
-        ZerosReader,
-    };
-
     use super::*;
+    use crate::test_util::{
+        measure_size, nonempty_range_strategy, read_size_strategy, read_to_vec, ZerosReader,
+    };
     use assert2::assert;
     use proptest::strategy::{Just, Strategy};
     use std::{collections::HashMap, io::ErrorKind, ops::Range, pin::pin};
     use test_strategy::proptest;
+    use tokio_test::block_on;
     use zip::read::ZipArchive;
 
     fn content_strategy() -> impl Strategy<Value = HashMap<String, Vec<u8>>> {
@@ -1097,7 +1096,7 @@ mod test {
         let zippity = pin!(Builder::<()>::new().build());
         let size = zippity.size();
 
-        let buf = unasync(read_to_vec(zippity, read_size)).unwrap();
+        let buf = block_on(read_to_vec(zippity, read_size)).unwrap();
 
         assert!(size == (buf.len() as u64));
 
@@ -1119,7 +1118,7 @@ mod test {
         let zippity = pin!(builder.build());
         let size = zippity.size();
 
-        let buf = unasync(read_to_vec(zippity, read_size)).unwrap();
+        let buf = block_on(read_to_vec(zippity, read_size)).unwrap();
 
         assert!(size == (buf.len() as u64));
 
@@ -1157,7 +1156,7 @@ mod test {
         let zippity = pin!(builder.build());
 
         let expected_size = zippity.size();
-        let actual_size = unasync(measure_size(zippity)).unwrap();
+        let actual_size = block_on(measure_size(zippity)).unwrap();
 
         assert!(actual_size == expected_size);
     }
@@ -1183,7 +1182,7 @@ mod test {
         builder.add_entry("xxx".into(), BadSize());
 
         let zippity = pin!(builder.build());
-        let e = unasync(read_to_vec(zippity, 1024)).unwrap_err();
+        let e = block_on(read_to_vec(zippity, 1024)).unwrap_err();
 
         assert!(e.kind() == ErrorKind::Other);
         let message = format!("{}", e.into_inner().unwrap());
@@ -1232,3 +1231,7 @@ mod test {
         }
     }
 }
+
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadMe;

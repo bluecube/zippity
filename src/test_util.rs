@@ -65,15 +65,6 @@ pub async fn measure_size(mut reader: Pin<&mut impl AsyncRead>) -> Result<u64> {
     }
 }
 
-/// Run a future in a new tokio runtime, block until it finishes and return its output
-pub fn unasync<Fut: Future>(fut: Fut) -> Fut::Output {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(fut)
-}
-
 /// Async readable that returns zeros.
 #[derive(Clone, Debug)]
 #[pin_project]

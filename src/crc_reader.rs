@@ -45,12 +45,12 @@ impl<T: AsyncRead> AsyncRead for CrcReader<T> {
 }
 #[cfg(test)]
 mod test {
-    use std::pin::pin;
-
     use super::*;
-    use crate::test_util::{read_size_strategy, read_to_vec, unasync};
+    use crate::test_util::{read_size_strategy, read_to_vec};
     use assert2::assert;
+    use std::pin::pin;
     use test_strategy::proptest;
+    use tokio_test::block_on;
 
     #[proptest]
     fn passes_through_data_and_crc(
@@ -58,7 +58,7 @@ mod test {
         #[strategy(read_size_strategy())] read_size: usize,
     ) {
         let mut reader = pin!(CrcReader::new(&content[..]));
-        let output = unasync(read_to_vec(reader.as_mut(), read_size)).unwrap();
+        let output = block_on(read_to_vec(reader.as_mut(), read_size)).unwrap();
 
         assert!(output == content);
         assert!(reader.get_crc32() == crc32fast::hash(&content));
@@ -71,7 +71,7 @@ mod test {
     fn known_crc() {
         let data: &[u8] = b"1234";
         let mut reader = pin!(CrcReader::new(data));
-        let _ = unasync(read_to_vec(reader.as_mut(), data.len())).unwrap();
+        let _ = block_on(read_to_vec(reader.as_mut(), data.len())).unwrap();
         assert!(reader.get_crc32() == 0x9be3e0a3);
     }
 }
