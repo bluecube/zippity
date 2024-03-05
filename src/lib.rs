@@ -716,7 +716,10 @@ pub enum ZippityError {
 
 #[cfg(test)]
 mod test {
-    use crate::test_util::{nonempty_range_strategy, read_size_strategy, read_to_vec, unasync};
+    use crate::test_util::{
+        measure_size, nonempty_range_strategy, read_size_strategy, read_to_vec, unasync,
+        ZerosReader,
+    };
 
     use super::*;
     use assert2::assert;
@@ -1151,6 +1154,28 @@ mod test {
 
             unpacked_content.insert(name, file_content);
         }
+    }
+
+    /// Tests that a zip archive with large file (> 4GB) and many files (> 65536)
+    /// can be created.
+    ///
+    /// Doesn't check that it unpacks correctly to keep the requirements low,
+    /// only verifies that the expected and actual sizes match.
+    /// This doesn't actually store the file or archive, but is still fairly slow.
+    #[test]
+    #[ignore = "this test is too slow"]
+    fn zip64_works() {
+        let mut builder = Builder::<ZerosReader>::new();
+        builder.add_entry("Big file".to_owned(), ZerosReader::new(0x100000000));
+        for i in 0..0xffff {
+            builder.add_entry(format!("Empty file {}", i), ZerosReader::new(0));
+        }
+        let zippity = pin!(builder.build());
+
+        let expected_size = zippity.size();
+        let actual_size = unasync(measure_size(zippity)).unwrap();
+
+        assert!(actual_size == expected_size);
     }
 
     #[test]
