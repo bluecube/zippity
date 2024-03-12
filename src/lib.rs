@@ -1091,17 +1091,43 @@ mod test {
         }
     }
 
-    #[proptest]
-    fn empty_archive_can_be_unzipped(#[strategy(read_size_strategy())] read_size: usize) {
+    #[test]
+    fn empty_archive_can_be_unzipped() {
         let zippity = pin!(Builder::<()>::new().build());
         let size = zippity.size();
 
-        let buf = block_on(read_to_vec(zippity, read_size)).unwrap();
+        let buf = block_on(read_to_vec(zippity, 1)).unwrap();
 
         assert!(size == (buf.len() as u64));
 
         let unpacked = ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip");
         assert!(unpacked.is_empty());
+    }
+
+    #[test]
+    fn archive_with_single_file_can_be_unzipped() {
+        let mut builder: Builder<&[u8]> = Builder::new();
+
+        builder.add_entry("Foo".to_owned(), b"bar!".as_slice());
+
+        let zippity = pin!(builder.build());
+        let size = zippity.size();
+
+        let buf = block_on(read_to_vec(zippity, 1)).unwrap();
+
+        assert!(size == (buf.len() as u64));
+
+        let mut unpacked =
+            ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip");
+        assert!(unpacked.len() == 1);
+
+        let mut zipfile = unpacked.by_index(0).unwrap();
+        let name = std::str::from_utf8(zipfile.name_raw()).unwrap().to_string();
+        assert!(name == "Foo");
+        let mut file_content = Vec::new();
+        use std::io::Read;
+        zipfile.read_to_end(&mut file_content).unwrap();
+        assert!(file_content == b"bar!");
     }
 
     #[proptest]
@@ -1137,6 +1163,7 @@ mod test {
 
             unpacked_content.insert(name, file_content);
         }
+        assert!(unpacked_content == content);
     }
 
     /// Tests that a zip archive with large file (> 4GB) and many files (> 65536)

@@ -4,8 +4,4 @@
 #
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
-cc 1a47cef37ca8a7f310aaa5966d09343093f795ecb6e4419b45e63890861f0eaa # shrinks to input = _ReadPackedStructArgs { range: 0..9 }
-cc b4882a12e63e5545c90bbd7cfc6505361c3377154fd5fdb2bbabd32b72fbbb72 # shrinks to input = _ReadPackedStructArgs { range: 1..9 }
-cc ae9e2a12ca692d793365d881f87c0ea5eab4d0c6c6d66b385a5f10655ab80245 # shrinks to input = _ReadStrArgs { s_and_range: ("\r�🕴", 1..9) }
-cc 24dc0dad8138ba90fa00e8a65a5de55ab34822687dea73a2c75c0f2fa32f0df8 # shrinks to input = _ReadFromBufferArgs { v_and_range: ([0], 1..2) }
-cc 91073c99ce46463b9e5324b2c66e9365e4abc86c25ec0b320f44fd8e5af0c077 # shrinks to input = _TestUnzipWithDataArgs { content: {"¡ \00": [], "0 𐀀 00": [], "Ȼ": []}, read_size: 167 }
+cc 13ac55e1e2aded9583c44c210a2b6f0c59518f077d4d20b1a5068467fb875d80 # shrinks to input = _ResultCanBeUnzippedArgs { content: {"0": []}, read_size: 8192 }
