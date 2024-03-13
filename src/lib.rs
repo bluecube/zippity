@@ -5,7 +5,6 @@ use pin_project::pin_project;
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::io::{Error, Result, SeekFrom};
-use std::num::NonZeroUsize;
 use std::pin::Pin;
 use std::task::{ready, Context, Poll};
 use structs::PackedStructZippityExt;
