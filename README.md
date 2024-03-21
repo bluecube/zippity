@@ -9,7 +9,7 @@ A library for creating a ZIP file on the fly. Currently work in progress.
 - [x] Supports Zip64 (files > 4GB).
 - [x] File size is known in advance
 - [x] Output is driven from outside (implements `tokio::io::AsyncRead`)
-- [ ] Allows seeking in the file (implements `tokio::io::AsyncSeek`)
+- [x] Allows seeking in the file (implements `tokio::io::AsyncSeek`)
 - [ ] Supports files on the filesystem as entries.
 - [ ] Supports integration with Actix Web (implements `actix_web::Responder`) behind feature flag
 
@@ -35,6 +35,9 @@ builder.add_entry("Entry name".to_owned(), b"Entry data".as_slice());
 // Build the reader object
 // Note that this does not touch the data yet.
 let mut zippity = builder.build();
+
+// Seek to last 10B
+zippity.seek(SeekFrom::End(-10)).await.unwrap();
 
 // Getting file size is in O(1)
 println!("Total zip file size will be {}B", zippity.size());

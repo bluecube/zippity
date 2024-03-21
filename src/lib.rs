@@ -85,6 +85,69 @@ struct ReaderEntry<D: EntryData> {
     crc32: Option<u32>,
 }
 
+impl<D: EntryData> ReaderEntry<D> {
+    fn get_reader<'a>(
+        &self,
+        mut pinned: Pin<&'a mut ReaderPinned<D>>,
+        ctx: &mut Context<'_>,
+    ) -> Poll<Result<Pin<&'a mut CrcReader<D::Reader>>>> {
+        if let ReaderPinnedProj::Nothing = pinned.as_mut().project() {
+            let reader_future = self.data.get_reader();
+            pinned.set(ReaderPinned::ReaderFuture(reader_future));
+        }
+
+        if let ReaderPinnedProj::ReaderFuture(ref mut reader_future) = pinned.as_mut().project() {
+            let reader = ready!(reader_future.as_mut().poll(ctx))?;
+            pinned.set(ReaderPinned::FileReader(CrcReader::new(reader)));
+        }
+
+        match pinned.project() {
+            ReaderPinnedProj::FileReader(reader) => Poll::Ready(Ok(reader)),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Get the CRC for this entry, possibly recomputing it from the file.
+    /// Stores state in `self.crc32` and `pinned`,
+    /// Calling this method repeatedly will either return the already computed CRC without changes.
+    /// or progress towards computing the CRC.
+    fn get_crc(
+        &mut self,
+        mut pinned: Pin<&mut ReaderPinned<D>>,
+        ctx: &mut Context<'_>,
+        read_buffer: &mut Vec<u8>,
+    ) -> Poll<Result<u32>> {
+        if let Some(crc) = self.crc32 {
+            return Poll::Ready(Ok(crc));
+        }
+
+        let mut file_reader = ready!(self.get_reader(pinned.as_mut(), ctx))?;
+
+        assert!(read_buffer.is_empty());
+        read_buffer.resize(8192, 0);
+
+        loop {
+            let mut read_buffer_wrapped = ReadBuf::new(read_buffer.as_mut_slice());
+            let remaining_before = read_buffer_wrapped.remaining();
+            ready!(file_reader
+                .as_mut()
+                .poll_read(ctx, &mut read_buffer_wrapped))?;
+            if read_buffer_wrapped.remaining() == remaining_before {
+                break;
+            }
+        }
+
+        let crc32 = file_reader.get_crc32();
+
+        pinned.set(ReaderPinned::Nothing);
+        read_buffer.clear();
+
+        self.crc32 = Some(crc32);
+
+        Poll::Ready(Ok(crc32))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Builder<D: EntryData> {
     entries: BTreeMap<String, BuilderEntry<D>>,
@@ -148,6 +211,7 @@ impl<D: EntryData> Builder<D> {
             read_state: ReadState {
                 current_chunk,
                 chunk_processed_size: 0,
+                position: 0,
                 staging_buffer: Vec::new(),
                 to_skip: 0,
             },
@@ -245,9 +309,13 @@ struct ReadState {
     /// Data in staging buffer counts as already processed.
     /// Used only for verification and for error reporting on EntryData.
     chunk_processed_size: u64,
+    /// Current position in the file (counts bytes written to the output)
+    /// This value is returned by tell.
+    position: u64,
     /// Buffer for data that couldn't get written to the output directly.
     /// Content of this will get written to output first, before any more chunk
     /// reading is attempted.
+    /// TODO: Investigate using BytesMut, especially for ReaderEntry::get_crc
     staging_buffer: Vec<u8>,
     /// How many bytes must be skipped, counted from the start of the current chunk
     to_skip: u64,
@@ -399,25 +467,13 @@ impl ReadState {
     ) -> Poll<Result<bool>> {
         let expected_size = entry.data.size();
 
-        if let ReaderPinnedProj::Nothing = pinned.as_mut().project() {
-            let reader_future = entry.data.get_reader();
-            pinned.set(ReaderPinned::ReaderFuture(reader_future));
-        }
-
-        if let ReaderPinnedProj::ReaderFuture(ref mut reader_future) = pinned.as_mut().project() {
-            let reader = ready!(reader_future.as_mut().poll(ctx))?;
-            pinned.set(ReaderPinned::FileReader(CrcReader::new(reader)));
-        }
-
-        let ReaderPinnedProj::FileReader(ref mut file_reader) = pinned.as_mut().project() else {
-            panic!("FileReader must be available at this point because of the preceding two conditions");
-        };
+        let mut file_reader = ready!(entry.get_reader(pinned.as_mut(), ctx))?;
 
         // TODO: We might want to decide to not recompute the CRC and seek instead
         while self.to_skip > 0 {
             // Construct a temporary output buffer in the unused part of the real output buffer,
             // but not large enough to read more than the ammount to skip
-            // TODO: Wouldn't it be better to use the Vec that we keep anyway?
+            // TODO: Wouldn't it be better to use the staging buffer for this?
             let mut tmp_output = output.take(self.to_skip.try_into().unwrap_or(usize::MAX));
             assert!(tmp_output.filled().is_empty());
 
@@ -460,29 +516,35 @@ impl ReadState {
 
     fn read_data_descriptor<D: EntryData>(
         &mut self,
-        entry: &ReaderEntry<D>,
+        entry: &mut ReaderEntry<D>,
+        pinned: Pin<&mut ReaderPinned<D>>,
+        ctx: &mut Context<'_>,
         output: &mut ReadBuf<'_>,
-    ) -> bool {
-        // TODO: Recalculate CRC if needed
+    ) -> Poll<Result<bool>> {
+        let crc32 = ready!(entry.get_crc(pinned, ctx, &mut self.staging_buffer))?;
+
         self.read_packed_struct(
             structs::DataDescriptor64 {
                 signature: structs::DataDescriptor64::SIGNATURE,
-                crc32: entry.crc32.unwrap(),
+                crc32,
                 compressed_size: entry.data.size(),
                 uncompressed_size: entry.data.size(),
             },
             output,
         );
 
-        true
+        Poll::Ready(Ok(true))
     }
 
     fn read_cd_file_header<D: EntryData>(
         &mut self,
-        entry: &ReaderEntry<D>,
+        entry: &mut ReaderEntry<D>,
+        pinned: Pin<&mut ReaderPinned<D>>,
+        ctx: &mut Context<'_>,
         output: &mut ReadBuf<'_>,
-    ) -> bool {
-        // TODO: Recalculate CRC if needed
+    ) -> Poll<Result<bool>> {
+        let crc32 = ready!(entry.get_crc(pinned, ctx, &mut self.staging_buffer))?;
+
         self.read_packed_struct(
             structs::CentralDirectoryHeader {
                 signature: structs::CentralDirectoryHeader::SIGNATURE,
@@ -495,7 +557,7 @@ impl ReadState {
                 compression: structs::Compression::Store,
                 last_mod_time: 0,
                 last_mod_date: 0,
-                crc32: entry.crc32.unwrap(),
+                crc32,
                 compressed_size: 0xffffffff,
                 uncompressed_size: 0xffffffff,
                 file_name_len: entry.name.len() as u16,
@@ -520,7 +582,7 @@ impl ReadState {
             output,
         );
 
-        true
+        Poll::Ready(Ok(true))
     }
 
     fn read_eocd<D: EntryData>(
@@ -594,13 +656,11 @@ impl ReadState {
             }
 
             let current_chunk_size = self.current_chunk.size(entries);
-            /* TODO: Skipping is now disabled, because we don't have code for re-computing CRCs yet.
             if self.to_skip >= current_chunk_size {
                 self.to_skip -= current_chunk_size;
                 self.current_chunk = self.current_chunk.next(entries);
                 continue;
             }
-            */
 
             let chunk_done = match &mut self.current_chunk {
                 Chunk::LocalHeader { entry_index } => {
@@ -613,7 +673,7 @@ impl ReadState {
                         // We have already written something into the output -> interrupt this call, because
                         // we might need to return Pending when reading the file data
                         // TODO: Make sure that there is nothing in the staging buffer as well?
-                        return Poll::Ready(Ok(()));
+                        break;
                     }
                     let read_result = self.read_file_data(
                         &mut entries[entry_index],
@@ -625,11 +685,21 @@ impl ReadState {
                 }
                 Chunk::DataDescriptor { entry_index } => {
                     let entry_index = *entry_index;
-                    self.read_data_descriptor(&entries[entry_index], output)
+                    ready!(self.read_data_descriptor(
+                        &mut entries[entry_index],
+                        pinned.as_mut(),
+                        ctx,
+                        output
+                    ))?
                 }
                 Chunk::CDFileHeader { entry_index } => {
                     let entry_index = *entry_index;
-                    self.read_cd_file_header(&entries[entry_index], output)
+                    ready!(self.read_cd_file_header(
+                        &mut entries[entry_index],
+                        pinned.as_mut(),
+                        ctx,
+                        output
+                    ))?
                 }
                 Chunk::Eocd => self.read_eocd(sizes, entries, output),
                 Chunk::Finished => unreachable!(),
@@ -642,7 +712,46 @@ impl ReadState {
             }
         }
 
+        self.position += (initial_remaining - output.remaining()) as u64;
         Poll::Ready(Ok(()))
+    }
+
+    /// Always succeeds, seeking past end of file causes tell() to return the
+    /// set position and reads returning empty buffers (=EOF).
+    fn seek_bytes<D: EntryData>(
+        &mut self,
+        sizes: &Sizes,
+        entries: &[ReaderEntry<D>],
+        mut pinned: Pin<&mut ReaderPinned<D>>,
+        position: u64,
+    ) {
+        let (chunk, chunk_position) = if position >= sizes.eocd_offset {
+            (Chunk::Eocd, sizes.eocd_offset)
+        } else if position >= sizes.cd_offset {
+            assert!(!entries.is_empty());
+            (Chunk::CDFileHeader { entry_index: 0 }, sizes.cd_offset)
+        } else {
+            assert!(!entries.is_empty());
+            let entry_index = match entries.binary_search_by_key(&position, |entry| entry.offset) {
+                Ok(index) => index,
+                Err(index) => index - 1,
+            };
+            assert!(entry_index < entries.len());
+            assert!(entries[entry_index].offset <= position);
+            assert!(entry_index == entries.len() - 1 || entries[entry_index + 1].offset > position);
+            (
+                Chunk::LocalHeader { entry_index },
+                entries[entry_index].offset,
+            )
+        };
+
+        self.current_chunk = chunk;
+        self.chunk_processed_size = 0;
+        self.position = position;
+        self.staging_buffer.clear();
+        self.to_skip = position - chunk_position;
+
+        pinned.set(ReaderPinned::Nothing);
     }
 }
 
@@ -650,6 +759,12 @@ impl<D: EntryData> Reader<D> {
     /// Return the total size of the file in bytes.
     pub fn size(&self) -> u64 {
         self.sizes.total_size
+    }
+
+    /// Return current position in the ZIP file in bytes.
+    /// If not seeking, this is the number of bytes already read.
+    pub fn tell(&self) -> u64 {
+        self.read_state.position
     }
 }
 
@@ -671,12 +786,39 @@ impl<D: EntryData> AsyncRead for Reader<D> {
 }
 
 impl<D: EntryData> AsyncSeek for Reader<D> {
-    fn start_seek(self: Pin<&mut Self>, _position: SeekFrom) -> Result<()> {
-        todo!()
+    fn start_seek(self: Pin<&mut Self>, position: SeekFrom) -> Result<()> {
+        let resolve_offset = |base: u64, offset: i64| -> Result<u64> {
+            let base = base as i64;
+            let result = base + offset;
+            if result < 0 {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    ZippityError::SeekingToNegativeOffset,
+                ))
+            } else {
+                Ok(result as u64)
+            }
+        };
+        let pos = match position {
+            SeekFrom::Start(pos) => pos,
+            SeekFrom::Current(offset) => resolve_offset(self.tell(), offset)?,
+            SeekFrom::End(offset) => resolve_offset(self.size(), offset)?,
+        };
+
+        let projected = self.project();
+        projected.read_state.seek_bytes(
+            &projected.sizes,
+            &projected.entries,
+            projected.pinned,
+            pos,
+        );
+        // TODO: This way the seek is lazy, meaning that it will prefer not to do anything
+        // until there is a time to actually read. Is this ok?
+        Ok(())
     }
 
     fn poll_complete(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<u64>> {
-        todo!()
+        Poll::Ready(Ok(self.tell()))
     }
 }
 
@@ -688,6 +830,8 @@ pub enum ZippityError {
         expected_size: u64,
         actual_size: u64,
     },
+    #[error("Seeking to negative offset")]
+    SeekingToNegativeOffset,
 }
 
 #[cfg(test)]
@@ -696,8 +840,9 @@ mod test {
     use crate::test_util::{measure_size, read_size_strategy, read_to_vec, ZerosReader};
     use assert2::assert;
     use proptest::strategy::{Just, Strategy};
-    use std::{collections::HashMap, io::ErrorKind, ops::Range, pin::pin};
+    use std::{collections::HashMap, io::ErrorKind, pin::pin};
     use test_strategy::proptest;
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
     use tokio_test::block_on;
     use zip::read::ZipArchive;
 
@@ -736,6 +881,7 @@ mod test {
             chunk_processed_size: 0,
             staging_buffer: Vec::new(),
             to_skip: 0,
+            position: 0,
         };
 
         let mut buf_backing = Vec::new();
@@ -775,6 +921,7 @@ mod test {
             chunk_processed_size: 0,
             staging_buffer: Vec::new(),
             to_skip,
+            position: 0,
         };
 
         let mut buf_backing = Vec::new();
@@ -803,6 +950,7 @@ mod test {
             chunk_processed_size: 0,
             staging_buffer: Vec::new(),
             to_skip,
+            position: 0,
         };
 
         let mut buf_backing = Vec::new();
@@ -844,6 +992,7 @@ mod test {
             chunk_processed_size: 0,
             staging_buffer: initial_buffer_content.clone(),
             to_skip,
+            position: 0,
         };
 
         let mut buf_backing = Vec::new();
@@ -886,6 +1035,7 @@ mod test {
             chunk_processed_size: 0,
             staging_buffer: Vec::new(),
             to_skip: 0,
+            position: 0,
         };
 
         let mut buf_backing = Vec::new();
@@ -926,6 +1076,7 @@ mod test {
             chunk_processed_size: 0,
             staging_buffer: Vec::new(),
             to_skip,
+            position: 0,
         };
 
         let mut buf_backing = Vec::new();
@@ -964,6 +1115,7 @@ mod test {
             chunk_processed_size: 0,
             staging_buffer: Vec::new(),
             to_skip,
+            position: 0,
         };
 
         let mut buf_backing = Vec::new();
@@ -1006,6 +1158,7 @@ mod test {
             chunk_processed_size: 0,
             staging_buffer: initial_buffer_content.clone(),
             to_skip,
+            position: 0,
         };
 
         let mut buf_backing = Vec::new();
@@ -1049,6 +1202,7 @@ mod test {
             chunk_processed_size: 0,
             staging_buffer: test_data.clone(),
             to_skip,
+            position: 0,
         };
 
         // Calculate range in test data that will be added to the output.
@@ -1120,6 +1274,32 @@ mod test {
         assert!(file_content == b"bar!");
     }
 
+    #[test]
+    fn archive_with_single_empty_file_can_be_unzipped() {
+        let mut builder: Builder<&[u8]> = Builder::new();
+
+        builder.add_entry("0".to_owned(), b"".as_slice());
+
+        let zippity = pin!(builder.build());
+        let size = zippity.size();
+
+        let buf = block_on(read_to_vec(zippity, 1)).unwrap();
+
+        assert!(size == (buf.len() as u64));
+
+        let mut unpacked =
+            ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip");
+        assert!(unpacked.len() == 1);
+
+        let mut zipfile = unpacked.by_index(0).unwrap();
+        let name = std::str::from_utf8(zipfile.name_raw()).unwrap().to_string();
+        assert!(name == "0");
+        let mut file_content = Vec::new();
+        use std::io::Read;
+        zipfile.read_to_end(&mut file_content).unwrap();
+        assert!(file_content == b"");
+    }
+
     #[proptest]
     fn result_can_be_unzipped(
         #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
@@ -1176,6 +1356,76 @@ mod test {
         let actual_size = block_on(measure_size(zippity)).unwrap();
 
         assert!(actual_size == expected_size);
+    }
+
+    #[proptest]
+    fn seeking_returns_correct_data(
+        #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
+        #[strategy(read_size_strategy())] read_size: usize,
+        #[strategy(0f64..=1f64)] seek_pos_fraction: f64,
+    ) {
+        let mut builder: Builder<&[u8]> = Builder::new();
+        content.iter().for_each(|(name, value)| {
+            builder.add_entry(name.clone(), value.as_ref());
+        });
+
+        let zippity_whole = pin!(builder.clone().build());
+        let size = zippity_whole.size();
+
+        dbg!(size);
+
+        let buf_whole = block_on(read_to_vec(zippity_whole, 8192)).unwrap();
+        assert!(size == (buf_whole.len() as u64));
+
+        let seek_pos = (seek_pos_fraction * size as f64).floor() as u64;
+        dbg!(seek_pos);
+        assert!(
+            seek_pos < size,
+            "Test construction: The position must be inside the file"
+        );
+
+        let mut zippity_part = pin!(builder.build());
+        let seek_reported_position =
+            block_on(zippity_part.seek(SeekFrom::Start(seek_pos))).unwrap();
+        assert!(seek_reported_position == seek_pos);
+        let buf_part = block_on(read_to_vec(zippity_part, read_size)).unwrap();
+
+        assert!(buf_part == buf_whole[seek_pos as usize..]);
+    }
+
+    /// Test that reading multiple single bytes inside the zip file with absolute seeks
+    /// in between returns the same bytes as reading the whole file.
+    /// Also tests reusing the zippity reader object.
+    #[proptest]
+    fn seeking_single_bytes(
+        #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
+        #[strategy(proptest::collection::vec(0f64..=1f64, 1..100))] byte_positions_f: Vec<f64>,
+    ) {
+        let mut builder: Builder<&[u8]> = Builder::new();
+        content.iter().for_each(|(name, value)| {
+            builder.add_entry(name.clone(), value.as_ref());
+        });
+
+        let mut zippity = pin!(builder.clone().build());
+        let size = zippity.size();
+        let buf_whole = block_on(read_to_vec(zippity.as_mut(), 8192)).unwrap();
+        assert!(size == (buf_whole.len() as u64));
+
+        dbg!(size);
+
+        for fraction in byte_positions_f {
+            let seek_pos = (fraction * size as f64).floor() as u64;
+            dbg!(seek_pos);
+            assert!(
+                seek_pos < size,
+                "Test construction: The position must be inside the file"
+            );
+            let expected = buf_whole[seek_pos as usize];
+
+            block_on(zippity.seek(SeekFrom::Start(seek_pos))).unwrap();
+            let actual = block_on(zippity.read_u8()).unwrap();
+            assert!(actual == expected);
+        }
     }
 
     #[test]
