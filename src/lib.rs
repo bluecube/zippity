@@ -297,7 +297,8 @@ impl ReadState {
                 return;
             } else if (self.to_skip == 0u64) & (output.remaining() >= size) {
                 let output_slice = output.initialize_unfilled_to(size);
-                ps.pack_to_slice(output_slice).unwrap();
+                ps.pack_to_slice(output_slice)
+                    .unwrap_or_else(|_| unreachable!());
                 output.advance(size);
                 return;
             }
@@ -306,7 +307,7 @@ impl ReadState {
         let buf_index = self.staging_buffer.len();
         self.staging_buffer.resize(buf_index + size, 0);
         ps.pack_to_slice(&mut self.staging_buffer[buf_index..])
-            .unwrap();
+            .unwrap_or_else(|_| unreachable!());
     }
 
     /// Read string slice to the output or to the staging buffer
@@ -637,7 +638,7 @@ impl ReadState {
                     self.read_cd_file_header(&entries[entry_index], output)
                 }
                 Chunk::Eocd => self.read_eocd(sizes, entries, output),
-                _ => panic!("Unexpected current chunk"),
+                Chunk::Finished => unreachable!(),
             };
 
             dbg!(chunk_done);
