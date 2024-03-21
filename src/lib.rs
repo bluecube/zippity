@@ -583,21 +583,15 @@ impl ReadState {
     ) -> Poll<std::io::Result<()>> {
         let initial_remaining = output.remaining();
 
-        println!();
         while output.remaining() > 0 {
             if !self.staging_buffer.is_empty() {
-                println!("Read from staging buffer");
-                dbg!(self.staging_buffer.len());
                 self.read_from_staging(output);
                 continue;
             }
 
-            println!("Current chunk: {:?}", self.current_chunk);
             if let Chunk::Finished = self.current_chunk {
                 return Poll::Ready(Ok(()));
             }
-
-            dbg!(self.to_skip);
 
             let current_chunk_size = self.current_chunk.size(entries);
             /* TODO: Skipping is now disabled, because we don't have code for re-computing CRCs yet.
@@ -640,8 +634,6 @@ impl ReadState {
                 Chunk::Eocd => self.read_eocd(sizes, entries, output),
                 Chunk::Finished => unreachable!(),
             };
-
-            dbg!(chunk_done);
 
             if chunk_done {
                 assert!(self.chunk_processed_size == current_chunk_size);
@@ -701,9 +693,7 @@ pub enum ZippityError {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::test_util::{
-        measure_size, nonempty_range_strategy, read_size_strategy, read_to_vec, ZerosReader,
-    };
+    use crate::test_util::{measure_size, read_size_strategy, read_to_vec, ZerosReader};
     use assert2::assert;
     use proptest::strategy::{Just, Strategy};
     use std::{collections::HashMap, io::ErrorKind, ops::Range, pin::pin};

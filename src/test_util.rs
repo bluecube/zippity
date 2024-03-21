@@ -5,8 +5,8 @@ use pin_project::pin_project;
 use proptest::strategy::{Just, Strategy};
 use std::io::Result;
 use std::ops::Range;
+use std::pin::Pin;
 use std::task::Poll;
-use std::{future::Future, pin::Pin};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::EntryData;
@@ -16,13 +16,6 @@ pub fn read_size_strategy() -> impl Strategy<Value = usize> {
     const MIN: usize = 1;
     const MAX: usize = 8192;
     (MIN..=MAX).prop_map(|v| (MAX + MIN - v))
-}
-
-pub fn nonempty_range_strategy(limit: usize) -> impl Strategy<Value = Range<usize>> {
-    assert!(limit > 0);
-    (1..limit + 1)
-        .prop_flat_map(|upper| (0..upper, Just(upper)))
-        .prop_map(|(lower, upper)| lower..upper)
 }
 
 /// Takes an async readable, collects all data to vec.
