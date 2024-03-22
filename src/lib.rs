@@ -166,9 +166,17 @@ impl<D: EntryData> Builder<D> {
         }
     }
 
-    pub fn add_entry<T: Into<D>>(&mut self, name: String, data: T) {
+    pub fn add_entry<T: Into<D>>(
+        &mut self,
+        name: String,
+        data: T,
+    ) -> std::result::Result<(), ZippityError> {
+        if let Err(_) = u16::try_from(name.len()) {
+            return Err(ZippityError::TooLongEntryName { entry_name: name });
+        }
         let data = data.into();
         self.entries.insert(name, BuilderEntry { data });
+        Ok(())
     }
 
     pub fn build(self) -> Reader<D> {
@@ -824,6 +832,8 @@ impl<D: EntryData> AsyncSeek for Reader<D> {
 
 #[derive(Clone, Debug, Error, PartialEq)]
 pub enum ZippityError {
+    #[error("Entry name too long (length must fit into 16bit)")]
+    TooLongEntryName { entry_name: String },
     #[error("Entry {entry_name} reports length {expected_size} B, but was {actual_size} B")]
     LengthMismatch {
         entry_name: String,
@@ -839,6 +849,7 @@ mod test {
     use super::*;
     use crate::test_util::{measure_size, read_size_strategy, read_to_vec, ZerosReader};
     use assert2::assert;
+    use assert_matches::assert_matches;
     use proptest::strategy::{Just, Strategy};
     use std::{collections::HashMap, io::ErrorKind, pin::pin};
     use test_strategy::proptest;
@@ -868,6 +879,20 @@ mod test {
                 v: 0x0102030405060708,
             }
         }
+    }
+
+    #[test]
+    fn too_long_enty_name() {
+        let mut builder: Builder<()> = Builder::new();
+
+        let name_length = u16::MAX as usize + 1;
+        let e = builder
+            .add_entry(
+                std::iter::repeat("X").take(name_length).collect::<String>(),
+                (),
+            )
+            .unwrap_err();
+        assert_matches!(e, ZippityError::TooLongEntryName { entry_name } if entry_name.len() == name_length);
     }
 
     #[proptest]
@@ -1252,7 +1277,9 @@ mod test {
     fn archive_with_single_file_can_be_unzipped() {
         let mut builder: Builder<&[u8]> = Builder::new();
 
-        builder.add_entry("Foo".to_owned(), b"bar!".as_slice());
+        builder
+            .add_entry("Foo".to_owned(), b"bar!".as_slice())
+            .unwrap();
 
         let zippity = pin!(builder.build());
         let size = zippity.size();
@@ -1278,7 +1305,7 @@ mod test {
     fn archive_with_single_empty_file_can_be_unzipped() {
         let mut builder: Builder<&[u8]> = Builder::new();
 
-        builder.add_entry("0".to_owned(), b"".as_slice());
+        builder.add_entry("0".to_owned(), b"".as_slice()).unwrap();
 
         let zippity = pin!(builder.build());
         let size = zippity.size();
@@ -1308,7 +1335,7 @@ mod test {
         let mut builder: Builder<&[u8]> = Builder::new();
 
         content.iter().for_each(|(name, value)| {
-            builder.add_entry(name.clone(), value.as_ref());
+            builder.add_entry(name.clone(), value.as_ref()).unwrap();
         });
 
         let zippity = pin!(builder.build());
@@ -1346,9 +1373,13 @@ mod test {
     #[ignore = "this test is too slow"]
     fn zip64_works() {
         let mut builder = Builder::<ZerosReader>::new();
-        builder.add_entry("Big file".to_owned(), ZerosReader::new(0x100000000));
+        builder
+            .add_entry("Big file".to_owned(), ZerosReader::new(0x100000000))
+            .unwrap();
         for i in 0..0xffff {
-            builder.add_entry(format!("Empty file {}", i), ZerosReader::new(0));
+            builder
+                .add_entry(format!("Empty file {}", i), ZerosReader::new(0))
+                .unwrap();
         }
         let zippity = pin!(builder.build());
 
@@ -1366,7 +1397,7 @@ mod test {
     ) {
         let mut builder: Builder<&[u8]> = Builder::new();
         content.iter().for_each(|(name, value)| {
-            builder.add_entry(name.clone(), value.as_ref());
+            builder.add_entry(name.clone(), value.as_ref()).unwrap();
         });
 
         let zippity_whole = pin!(builder.clone().build());
@@ -1403,7 +1434,7 @@ mod test {
     ) {
         let mut builder: Builder<&[u8]> = Builder::new();
         content.iter().for_each(|(name, value)| {
-            builder.add_entry(name.clone(), value.as_ref());
+            builder.add_entry(name.clone(), value.as_ref()).unwrap();
         });
 
         let mut zippity = pin!(builder.clone().build());
@@ -1446,7 +1477,7 @@ mod test {
         }
 
         let mut builder: Builder<BadSize> = Builder::new();
-        builder.add_entry("xxx".into(), BadSize());
+        builder.add_entry("xxx".into(), BadSize()).unwrap();
 
         let zippity = pin!(builder.build());
         let e = block_on(read_to_vec(zippity, 1024)).unwrap_err();
@@ -1466,7 +1497,7 @@ mod test {
         let mut builder: Builder<&[u8]> = Builder::new();
 
         content.iter().for_each(|(name, value)| {
-            builder.add_entry(name.clone(), value.as_ref());
+            builder.add_entry(name.clone(), value.as_ref()).unwrap();
         });
 
         let local_sizes: HashMap<String, u64> = builder
