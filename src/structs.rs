@@ -1,3 +1,4 @@
+#![allow(clippy::unreadable_literal)]
 use packed_struct::prelude::*;
 
 /// Local file header
@@ -163,10 +164,22 @@ pub enum Compression {
 
 pub trait PackedStructZippityExt {
     fn packed_size() -> u64;
+    fn packed_size_usize() -> usize;
+    fn packed_size_u16() -> u16;
 }
 
 impl<T: PackedStruct> PackedStructZippityExt for T {
     fn packed_size() -> u64 {
-        Self::packed_bytes_size(None).unwrap() as u64
+        Self::packed_size_usize() as u64
+    }
+
+    fn packed_size_usize() -> usize {
+        Self::packed_bytes_size(None).unwrap_or_else(|_| unreachable!("This never fails"))
+    }
+
+    fn packed_size_u16() -> u16 {
+        Self::packed_size_usize()
+            .try_into()
+            .expect("The struct is small")
     }
 }

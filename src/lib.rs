@@ -16,7 +16,7 @@ mod structs;
 mod test_util;
 
 /// Minimum version needed to extract the zip64 extensions required by zippity
-pub const ZIP64_VERSION_TO_EXTRACT: u16 = 45;
+pub const ZIP64_VERSION_TO_EXTRACT: u8 = 45;
 
 pub trait EntryData {
     type Reader: AsyncRead;
@@ -68,7 +68,7 @@ impl<D: EntryData> BuilderEntry<D> {
         local_header + zip64_extra_data + filename + data + data_descriptor
     }
 
-    fn get_cd_header_size(&self, name: &str) -> u64 {
+    fn get_cd_header_size(name: &str) -> u64 {
         let filename = name.len() as u64;
         let cd_entry = structs::CentralDirectoryHeader::packed_size();
         let zip64_extra_data = structs::Zip64ExtraField::packed_size();
@@ -166,12 +166,14 @@ impl<D: EntryData> Builder<D> {
         }
     }
 
+    /// # Errors
+    /// Will return an error if `name` is longer than `u16::MAX` (limitation of Zip format)
     pub fn add_entry<T: Into<D>>(
         &mut self,
         name: String,
         data: T,
     ) -> std::result::Result<(), ZippityError> {
-        if let Err(_) = u16::try_from(name.len()) {
+        if u16::try_from(name.len()).is_err() {
             return Err(ZippityError::TooLongEntryName { entry_name: name });
         }
         let data = data.into();
@@ -190,7 +192,7 @@ impl<D: EntryData> Builder<D> {
                 let size = entry.get_local_size(&name);
                 let offset_copy = offset;
                 offset += size;
-                cd_size += entry.get_cd_header_size(&name);
+                cd_size += BuilderEntry::<D>::get_cd_header_size(&name);
                 ReaderEntry {
                     name,
                     data: entry.data,
@@ -266,7 +268,7 @@ impl Chunk {
                     + structs::Zip64EndOfCentralDirectoryRecord::packed_size()
                     + structs::EndOfCentralDirectory::packed_size()
             }
-            Chunk::Finished => 0,
+            Chunk::Finished => unreachable!(),
         }
     }
 
@@ -295,7 +297,7 @@ impl Chunk {
                 }
             }
             Chunk::Eocd => Chunk::Finished,
-            Chunk::Finished => Chunk::Finished,
+            Chunk::Finished => unreachable!(),
         }
     }
 }
@@ -359,12 +361,13 @@ impl ReadState {
     /// Read packed struct.
     /// Either reads to `output` (fast path), or to `self.staging_buffer`
     /// Never writes to output, if staging buffer is non empty, or if we need to skip something
+    #[allow(clippy::needless_pass_by_value)] // Makes the call sites more ergonomic
     fn read_packed_struct<P>(&mut self, ps: P, output: &mut ReadBuf<'_>)
     where
         P: PackedStruct,
     {
         let size64 = P::packed_size();
-        let size = size64 as usize;
+        let size = P::packed_size_usize();
         self.chunk_processed_size += size64;
 
         if self.staging_buffer.is_empty() {
@@ -383,7 +386,11 @@ impl ReadState {
         let buf_index = self.staging_buffer.len();
         self.staging_buffer.resize(buf_index + size, 0);
         ps.pack_to_slice(&mut self.staging_buffer[buf_index..])
-            .unwrap_or_else(|_| unreachable!());
+            .unwrap_or_else(|_| {
+                unreachable!(
+                    "Buffer is resized appropriately, there is no other way this could fail"
+                )
+            });
     }
 
     /// Read string slice to the output or to the staging buffer
@@ -407,7 +414,12 @@ impl ReadState {
 
     /// Read from the staging buffer to output
     fn read_from_staging(&mut self, output: &mut ReadBuf<'_>) {
-        let start = self.to_skip as usize;
+        let start = self.to_skip.try_into()
+            .unwrap_or_else(|_|
+                unreachable!(
+                    "At most one chunk (but never a file data chunk) will ever be in the staging buffer, and those all are small."
+                )
+            );
         let end = start + output.remaining();
         let last_read = end >= self.staging_buffer.len();
         let end = if last_read {
@@ -436,7 +448,7 @@ impl ReadState {
         self.read_packed_struct(
             structs::LocalFileHeader {
                 signature: structs::LocalFileHeader::SIGNATURE,
-                version_to_extract: ZIP64_VERSION_TO_EXTRACT,
+                version_to_extract: ZIP64_VERSION_TO_EXTRACT.into(),
                 flags: structs::GpBitFlag {
                     use_data_descriptor: true,
                 },
@@ -444,10 +456,14 @@ impl ReadState {
                 last_mod_time: 0,
                 last_mod_date: 0,
                 crc32: 0,
-                compressed_size: 0xffffffff,
-                uncompressed_size: 0xffffffff,
-                file_name_len: entry.name.len() as u16,
-                extra_field_len: structs::Zip64ExtraField::packed_size() as u16,
+                compressed_size: u32::MAX,
+                uncompressed_size: u32::MAX,
+                file_name_len: entry
+                    .name
+                    .len()
+                    .try_into()
+                    .unwrap_or_else(|_| unreachable!("Checked when constructing entries.")),
+                extra_field_len: structs::Zip64ExtraField::packed_size_u16(),
             },
             output,
         );
@@ -455,7 +471,7 @@ impl ReadState {
         self.read_packed_struct(
             structs::Zip64ExtraField {
                 tag: structs::Zip64ExtraField::TAG,
-                size: structs::Zip64ExtraField::packed_size() as u16 - 4,
+                size: structs::Zip64ExtraField::packed_size_u16() - 4,
                 uncompressed_size: 0,
                 compressed_size: 0,
                 offset: entry.offset,
@@ -558,23 +574,27 @@ impl ReadState {
                 signature: structs::CentralDirectoryHeader::SIGNATURE,
                 version_made_by: structs::VersionMadeBy {
                     os: structs::VersionMadeByOs::Unix,
-                    spec_version: ZIP64_VERSION_TO_EXTRACT as u8,
+                    spec_version: ZIP64_VERSION_TO_EXTRACT,
                 },
-                version_to_extract: ZIP64_VERSION_TO_EXTRACT,
+                version_to_extract: ZIP64_VERSION_TO_EXTRACT.into(),
                 flags: 0,
                 compression: structs::Compression::Store,
                 last_mod_time: 0,
                 last_mod_date: 0,
                 crc32,
-                compressed_size: 0xffffffff,
-                uncompressed_size: 0xffffffff,
-                file_name_len: entry.name.len() as u16,
-                extra_field_len: structs::Zip64ExtraField::packed_size() as u16,
+                compressed_size: u32::MAX,
+                uncompressed_size: u32::MAX,
+                file_name_len: entry
+                    .name
+                    .len()
+                    .try_into()
+                    .unwrap_or_else(|_| unreachable!("Checked when constructing entries.")),
+                extra_field_len: structs::Zip64ExtraField::packed_size_u16(),
                 file_comment_length: 0,
-                disk_number_start: 0xffff,
+                disk_number_start: u16::MAX,
                 internal_attributes: 0,
                 external_attributes: 0,
-                local_header_offset: 0xffffffff,
+                local_header_offset: u32::MAX,
             },
             output,
         );
@@ -582,7 +602,7 @@ impl ReadState {
         self.read_packed_struct(
             structs::Zip64ExtraField {
                 tag: structs::Zip64ExtraField::TAG,
-                size: structs::Zip64ExtraField::packed_size() as u16 - 4,
+                size: structs::Zip64ExtraField::packed_size_u16() - 4,
                 uncompressed_size: entry.data.size(),
                 compressed_size: entry.data.size(),
                 offset: entry.offset,
@@ -605,9 +625,9 @@ impl ReadState {
                 size_of_zip64_eocd: structs::Zip64EndOfCentralDirectoryRecord::packed_size() - 12,
                 version_made_by: structs::VersionMadeBy {
                     os: structs::VersionMadeByOs::Unix,
-                    spec_version: ZIP64_VERSION_TO_EXTRACT as u8,
+                    spec_version: ZIP64_VERSION_TO_EXTRACT,
                 },
-                version_to_extract: ZIP64_VERSION_TO_EXTRACT,
+                version_to_extract: ZIP64_VERSION_TO_EXTRACT.into(),
                 this_disk_number: 0,
                 start_of_cd_disk_number: 0,
                 this_cd_entry_count: entries.len() as u64,
@@ -631,10 +651,10 @@ impl ReadState {
                 signature: structs::EndOfCentralDirectory::SIGNATURE,
                 this_disk_number: 0,
                 start_of_cd_disk_number: 0,
-                this_cd_entry_count: 0xffff,
-                total_cd_entry_count: 0xffff,
-                size_of_cd: 0xffffffff,
-                cd_offset: 0xffffffff,
+                this_cd_entry_count: u16::MAX,
+                total_cd_entry_count: u16::MAX,
+                size_of_cd: u32::MAX,
+                cd_offset: u32::MAX,
                 file_comment_length: 0,
             },
             output,
@@ -724,7 +744,7 @@ impl ReadState {
         Poll::Ready(Ok(()))
     }
 
-    /// Always succeeds, seeking past end of file causes tell() to return the
+    /// Always succeeds, seeking past end of file causes `tell()` to return the
     /// set position and reads returning empty buffers (=EOF).
     fn seek_bytes<D: EntryData>(
         &mut self,
@@ -814,12 +834,9 @@ impl<D: EntryData> AsyncSeek for Reader<D> {
         };
 
         let projected = self.project();
-        projected.read_state.seek_bytes(
-            &projected.sizes,
-            &projected.entries,
-            projected.pinned,
-            pos,
-        );
+        projected
+            .read_state
+            .seek_bytes(projected.sizes, projected.entries, projected.pinned, pos);
         // TODO: This way the seek is lazy, meaning that it will prefer not to do anything
         // until there is a time to actually read. Is this ok?
         Ok(())
@@ -859,10 +876,9 @@ mod test {
 
     fn content_strategy() -> impl Strategy<Value = HashMap<String, Vec<u8>>> {
         proptest::collection::hash_map(
-            ".{1,20}",
-            (0..100).prop_map(|l| (0..l).map(|v| (v & 0xff) as u8).collect()),
-            //proptest::collection::vec(proptest::bits::u8::ANY, 0..100),
-            0..10,
+            ".*",
+            proptest::collection::vec(proptest::bits::u8::ANY, 0..100),
+            0..100,
         )
     }
 
@@ -1271,6 +1287,28 @@ mod test {
 
         let unpacked = ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip");
         assert!(unpacked.is_empty());
+    }
+
+    #[test]
+    fn empty_entry_name_can_be_unzipped() {
+        let mut builder: Builder<()> = Builder::new();
+
+        builder.add_entry(String::new(), ()).unwrap();
+
+        let zippity = pin!(builder.build());
+        let buf = block_on(read_to_vec(zippity, 8192)).unwrap();
+
+        let mut unpacked =
+            ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip");
+        assert!(unpacked.len() == 1);
+
+        let mut zipfile = unpacked.by_index(0).unwrap();
+        let name = std::str::from_utf8(zipfile.name_raw()).unwrap().to_string();
+        assert!(name.is_empty());
+        let mut file_content = Vec::new();
+        use std::io::Read;
+        zipfile.read_to_end(&mut file_content).unwrap();
+        assert!(file_content.is_empty());
     }
 
     #[test]
