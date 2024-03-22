@@ -36,11 +36,11 @@ builder.add_entry("Entry name".to_owned(), b"Entry data".as_slice());
 // Note that this does not touch the data yet.
 let mut zippity = builder.build();
 
-// Seek to last 10B
-zippity.seek(SeekFrom::End(-10)).await.unwrap();
-
 // Getting file size is in O(1)
 println!("Total zip file size will be {}B", zippity.size());
+
+// Seek to last 10B
+zippity.seek(SeekFrom::End(-10)).await.unwrap();
 
 // Write to output (in this case a sink, throwing it away)
 copy(&mut zippity, &mut sink()).await.unwrap();
