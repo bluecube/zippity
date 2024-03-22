@@ -796,16 +796,16 @@ impl<D: EntryData> AsyncRead for Reader<D> {
 impl<D: EntryData> AsyncSeek for Reader<D> {
     fn start_seek(self: Pin<&mut Self>, position: SeekFrom) -> Result<()> {
         let resolve_offset = |base: u64, offset: i64| -> Result<u64> {
-            let base = base as i64;
-            let result = base + offset;
-            if result < 0 {
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    ZippityError::SeekingToNegativeOffset,
-                ))
-            } else {
-                Ok(result as u64)
+            if let Some(result) = base.checked_add_signed(offset) {
+                if result <= self.size() {
+                    return Ok(result);
+                }
             }
+
+            Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                ZippityError::SeekingOutsideOfFile,
+            ))
         };
         let pos = match position {
             SeekFrom::Start(pos) => pos,
@@ -840,8 +840,8 @@ pub enum ZippityError {
         expected_size: u64,
         actual_size: u64,
     },
-    #[error("Seeking to negative offset")]
-    SeekingToNegativeOffset,
+    #[error("Attempting to seek outside of the file")]
+    SeekingOutsideOfFile,
 }
 
 #[cfg(test)]
