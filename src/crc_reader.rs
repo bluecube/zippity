@@ -1,18 +1,21 @@
 use std::{
-    io::Result,
+    io::{Result, SeekFrom},
     pin::Pin,
     task::{ready, Context, Poll},
 };
 
 use pin_project::pin_project;
-use tokio::io::{AsyncRead, ReadBuf};
+use tokio::io::{AsyncRead, AsyncSeek, ReadBuf};
 
-/// Wraps an existing AsyncRead object and calculates CRC32 while reading from it.
+/// Wraps an existing AsyncRead and AsyncSeek object and calculates CRC32 while reading from it.
+/// Also adapts the tokio AsyncSeek to something closer to std::futures::AsyncSeek
 #[pin_project]
 pub struct CrcReader<T> {
     #[pin]
     inner_reader: T,
     hasher: crc32fast::Hasher,
+    did_seek: bool,
+    seek_in_progress: bool,
 }
 
 impl<T> CrcReader<T> {
@@ -20,12 +23,18 @@ impl<T> CrcReader<T> {
         CrcReader {
             inner_reader,
             hasher: crc32fast::Hasher::new(),
+            did_seek: false,
+            seek_in_progress: false,
         }
     }
 
     pub fn get_crc32(&self) -> u32 {
         // Cloning as a workaround -- finalize consumes, but we only have the hasher borrowed
         self.hasher.clone().finalize()
+    }
+
+    pub fn is_crc_valid(&self) -> bool {
+        !self.did_seek
     }
 }
 
@@ -43,6 +52,26 @@ impl<T: AsyncRead> AsyncRead for CrcReader<T> {
         Poll::Ready(Ok(()))
     }
 }
+
+impl<T: AsyncSeek> CrcReader<T> {
+    pub fn seek(
+        self: Pin<&mut Self>,
+        ctx: &mut Context<'_>,
+        position: SeekFrom,
+    ) -> Poll<Result<u64>> {
+        let mut projected = self.project();
+        if !*projected.seek_in_progress {
+            *projected.did_seek = true;
+            *projected.seek_in_progress = true;
+            projected.inner_reader.as_mut().start_seek(position)?;
+        }
+
+        let pos = ready!(projected.inner_reader.poll_complete(ctx))?;
+        *projected.seek_in_progress = false;
+        Poll::Ready(Ok(pos))
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

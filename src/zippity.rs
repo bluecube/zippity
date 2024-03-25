@@ -457,8 +457,7 @@ impl ReadState {
 
         let mut file_reader = ready!(entry.get_reader(pinned.as_mut(), ctx))?;
 
-        // TODO: We might want to decide to not recompute the CRC and seek instead
-        while self.to_skip > 0 {
+        /*while self.to_skip > 0 {
             // Construct a temporary output buffer in the unused part of the real output buffer,
             // but not large enough to read more than the ammount to skip
             // TODO: Wouldn't it be better to use the staging buffer for this?
@@ -469,6 +468,15 @@ impl ReadState {
 
             self.chunk_processed_size += tmp_output.filled().len() as u64;
             self.to_skip -= tmp_output.filled().len() as u64;
+        }*/
+        // TODO: We might want to decide to recompute the CRC instead
+        if self.to_skip > 0 {
+            let pos_after_seek = ready!(file_reader
+                .as_mut()
+                .seek(ctx, SeekFrom::Start(self.to_skip)))?;
+            assert!(pos_after_seek == self.to_skip);
+            self.chunk_processed_size += self.to_skip;
+            self.to_skip = 0;
         }
 
         let remaining_before_poll = output.remaining();
@@ -477,7 +485,9 @@ impl ReadState {
         if output.remaining() == remaining_before_poll {
             // Nothing was output => we read everything in the file already
 
-            entry.crc32 = Some(file_reader.get_crc32());
+            if file_reader.is_crc_valid() {
+                entry.crc32 = Some(file_reader.get_crc32());
+            }
 
             pinned.set(ReaderPinned::Nothing);
 

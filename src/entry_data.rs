@@ -1,10 +1,10 @@
 use std::future::Future;
 use std::io::Result;
 
-use tokio::io::AsyncRead;
+use tokio::io::{AsyncRead, AsyncSeek};
 
 pub trait EntryData {
-    type Reader: AsyncRead;
+    type Reader: AsyncRead + AsyncSeek;
     type ReaderFuture: Future<Output = Result<Self::Reader>>;
 
     fn size(&self) -> u64;

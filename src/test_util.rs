@@ -7,7 +7,7 @@ use std::io::Result;
 
 use std::pin::Pin;
 use std::task::Poll;
-use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek};
 
 use crate::EntryData;
 
@@ -88,6 +88,24 @@ impl AsyncRead for ZerosReader {
             *self.project().remaining -= n;
         }
         Poll::Ready(Ok(()))
+    }
+}
+
+impl AsyncSeek for ZerosReader {
+    fn start_seek(self: Pin<&mut Self>, position: std::io::SeekFrom) -> std::io::Result<()> {
+        match position {
+            std::io::SeekFrom::Start(pos) => *self.project().remaining = self.size - pos,
+            std::io::SeekFrom::End(_) => unimplemented!(),
+            std::io::SeekFrom::Current(_) => unimplemented!(),
+        };
+        Ok(())
+    }
+
+    fn poll_complete(
+        self: Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::io::Result<u64>> {
+        Poll::Ready(Ok(self.size - self.remaining))
     }
 }
 
