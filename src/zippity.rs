@@ -290,7 +290,6 @@ struct ReadState {
     /// Buffer for data that couldn't get written to the output directly.
     /// Content of this will get written to output first, before any more chunk
     /// reading is attempted.
-    /// TODO: Investigate using BytesMut, especially for ReaderEntry::get_crc
     staging_buffer: Vec<u8>,
     /// How many bytes must be skipped, counted from the start of the current chunk
     to_skip: u64,
