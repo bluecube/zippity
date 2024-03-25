@@ -21,9 +21,14 @@ pub const ZIP64_VERSION_TO_EXTRACT: u8 = 45;
 #[derive(Clone, Debug)]
 pub struct BuilderEntry<D> {
     data: D,
+    crc32: Option<u32>,
 }
 
 impl<D: EntryData> BuilderEntry<D> {
+    pub fn crc32(&mut self, crc32: u32) -> &mut Self {
+        self.crc32 = Some(crc32);
+        self
+    }
     fn get_local_size(&self, name: &str) -> u64 {
         let local_header = structs::LocalFileHeader::packed_size();
         let zip64_extra_data = structs::Zip64ExtraField::packed_size();
@@ -42,8 +47,10 @@ impl<D: EntryData> BuilderEntry<D> {
         cd_entry + zip64_extra_data + filename
     }
 }
+
 #[derive(Clone, Debug)]
 pub struct Builder<D: EntryData> {
+    // TODO: BTreeMap? Really? Perhaps we should use something that preserves insertion order.
     entries: BTreeMap<String, BuilderEntry<D>>,
 }
 
@@ -54,29 +61,42 @@ impl<D: EntryData> Default for Builder<D> {
 }
 
 impl<D: EntryData> Builder<D> {
+    /// Creates a new empty Builder.
     pub fn new() -> Self {
         Builder {
             entries: BTreeMap::new(),
         }
     }
 
+    /// Adds an entry to the zip file.
+    /// The returned reference can be used to add metadata to the entry.
     /// # Errors
     /// Will return an error if `name` is longer than `u16::MAX` (limitation of Zip format)
     pub fn add_entry<T: Into<D>>(
         &mut self,
         name: String,
         data: T,
-    ) -> std::result::Result<(), ZippityError> {
+    ) -> std::result::Result<&mut BuilderEntry<D>, ZippityError> {
+        use std::collections::btree_map::Entry::{Occupied, Vacant};
+
         if u16::try_from(name.len()).is_err() {
             return Err(ZippityError::TooLongEntryName { entry_name: name });
         }
+        let map_vacant_entry = match self.entries.entry(name) {
+            Vacant(e) => e,
+            Occupied(e) => {
+                return Err(ZippityError::DuplicateEntryName {
+                    entry_name: e.key().clone(),
+                });
+            }
+        };
+
         let data = data.into();
-        self.entries.insert(name, BuilderEntry { data });
-        Ok(())
+        let inserted = map_vacant_entry.insert(BuilderEntry { data, crc32: None });
+        Ok(inserted)
     }
 
     pub fn build(self) -> Reader<D> {
-        // TODO: Allow filling CRCs from cache.
         let mut offset: u64 = 0;
         let mut cd_size: u64 = 0;
         let entries: Vec<_> = self
@@ -91,7 +111,7 @@ impl<D: EntryData> Builder<D> {
                     name,
                     data: entry.data,
                     offset: offset_copy,
-                    crc32: None,
+                    crc32: entry.crc32,
                 }
             })
             .collect();
@@ -767,6 +787,16 @@ impl<D: EntryData> Reader<D> {
     /// If not seeking, this is the number of bytes already read.
     pub fn tell(&self) -> u64 {
         self.read_state.position
+    }
+
+    /// Returns an iterator of already calculated entry CRC32s.
+    /// This can be used to cache the CRCs externally to speed up later
+    /// requests that seek within the file (not having to re-read the whole
+    /// entry data when only CRC is needed).
+    pub fn crc32s(&self) -> impl Iterator<Item = (&str, u32)> {
+        self.entries
+            .iter()
+            .filter_map(|entry| entry.crc32.map(|crc| (entry.name.as_str(), crc)))
     }
 }
 
