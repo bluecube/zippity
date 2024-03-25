@@ -2,9 +2,9 @@
 
 use assert2::assert;
 use pin_project::pin_project;
-use proptest::strategy::{Just, Strategy};
+use proptest::strategy::Strategy;
 use std::io::Result;
-use std::ops::Range;
+
 use std::pin::Pin;
 use std::task::Poll;
 use tokio::io::{AsyncRead, AsyncReadExt};

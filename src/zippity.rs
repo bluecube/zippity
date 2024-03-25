@@ -818,7 +818,7 @@ mod test {
     use crate::test_util::{measure_size, read_size_strategy, read_to_vec, ZerosReader};
     use assert2::assert;
     use assert_matches::assert_matches;
-    use proptest::strategy::{Just, Strategy};
+    use proptest::strategy::Strategy;
     use std::{collections::HashMap, io::ErrorKind, pin::pin};
     use test_strategy::proptest;
     use tokio::io::{AsyncReadExt, AsyncSeekExt};
