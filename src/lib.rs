@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 mod crc_reader;
 mod entry_data;
 mod error;
