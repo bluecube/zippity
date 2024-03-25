@@ -11,9 +11,9 @@ use tokio::io::{AsyncRead, AsyncSeek, ReadBuf};
 
 use crate::crc_reader::CrcReader;
 use crate::entry_data::EntryData;
+use crate::error::ZippityError;
 use crate::structs;
 use crate::structs::PackedStructZippityExt;
-use crate::zippity_error::ZippityError;
 
 /// Minimum version needed to extract the zip64 extensions required by zippity
 pub const ZIP64_VERSION_TO_EXTRACT: u8 = 45;
