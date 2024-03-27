@@ -1425,39 +1425,111 @@ mod test {
         assert!(actual_size == expected_size);
     }
 
-    #[proptest]
-    fn seeking_returns_correct_data(
-        #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
-        #[strategy(read_size_strategy())] read_size: usize,
-        #[strategy(0f64..=1f64)] seek_pos_fraction: f64,
-    ) {
+    /// Prepare a reader with data from a hash map and a vector of the zip
+    /// read as a whole
+    fn prepare_seek_test_data(
+        content: &HashMap<String, Vec<u8>>,
+        read_size: usize,
+    ) -> (Reader<&[u8]>, Vec<u8>) {
         let mut builder: Builder<&[u8]> = Builder::new();
         content.iter().for_each(|(name, value)| {
             builder.add_entry(name.clone(), value.as_ref()).unwrap();
         });
 
         let zippity_whole = pin!(builder.clone().build());
-        let size = zippity_whole.size();
+        let buf_whole = block_on(read_to_vec(zippity_whole, read_size)).unwrap();
 
-        dbg!(size);
+        let zippity_ret = builder.build();
 
-        let buf_whole = block_on(read_to_vec(zippity_whole, 8192)).unwrap();
-        assert!(size == (buf_whole.len() as u64));
+        (zippity_ret, buf_whole)
+    }
 
-        let seek_pos = (seek_pos_fraction * size as f64).floor() as u64;
-        dbg!(seek_pos);
+    /// Convert a floating point between 0 and 1 and a byte array to a seekable
+    /// offset position within the file.
+    fn calc_seek_pos(pos_f: f64, buf_whole: &Vec<u8>) -> u64 {
+        let seek_pos = (pos_f * buf_whole.len() as f64).floor() as u64;
         assert!(
-            seek_pos < size,
+            seek_pos < buf_whole.len() as u64,
             "Test construction: The position must be inside the file"
         );
+        seek_pos
+    }
 
-        let mut zippity_part = pin!(builder.build());
-        let seek_reported_position =
-            block_on(zippity_part.seek(SeekFrom::Start(seek_pos))).unwrap();
-        assert!(seek_reported_position == seek_pos);
-        let buf_part = block_on(read_to_vec(zippity_part, read_size)).unwrap();
+    /// Seek the reader to a given position and verify that the remaining data
+    /// and returned position matches the end of the given ground truth data.
+    fn seek_read_and_verify<T: EntryData>(
+        reader: Reader<T>,
+        read_size: usize,
+        seek_from: SeekFrom,
+        ground_truth: &[u8],
+    ) -> u64 {
+        let mut reader = pin!(reader);
 
-        assert!(buf_part == buf_whole[seek_pos as usize..]);
+        let seek_reported = block_on(reader.seek(seek_from)).unwrap();
+        let buf = block_on(read_to_vec(reader, read_size)).unwrap();
+
+        assert!(buf.as_slice() == &ground_truth[seek_reported as usize..]);
+
+        seek_reported
+    }
+
+    /// Test that seeking to a valid location in a zip file using SeekFrom::Start works as expected
+    #[proptest]
+    fn seeking_from_start(
+        #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
+        #[strategy(read_size_strategy())] read_size: usize,
+        #[strategy(0f64..=1f64)] seek_pos_fraction: f64,
+    ) {
+        let (reader, buf_whole) = prepare_seek_test_data(&content, read_size);
+        let seek_pos = calc_seek_pos(seek_pos_fraction, &buf_whole);
+        let reported_pos = seek_read_and_verify(
+            reader,
+            read_size,
+            SeekFrom::Start(seek_pos),
+            buf_whole.as_slice(),
+        );
+        assert!(reported_pos == seek_pos);
+    }
+
+    /// Test that seeking to a valid location in a zip file using SeekFrom::End works as expected
+    #[proptest]
+    fn seeking_from_end(
+        #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
+        #[strategy(read_size_strategy())] read_size: usize,
+        #[strategy(0f64..=1f64)] seek_pos_fraction: f64,
+    ) {
+        let (reader, buf_whole) = prepare_seek_test_data(&content, read_size);
+        let seek_pos = calc_seek_pos(seek_pos_fraction, &buf_whole);
+        let reported_pos = seek_read_and_verify(
+            reader,
+            read_size,
+            SeekFrom::End(seek_pos as i64 - buf_whole.len() as i64),
+            buf_whole.as_slice(),
+        );
+        assert!(reported_pos == seek_pos);
+    }
+
+    /// Test that seeking to a valid location in a zip file using SeekFrom::Current works as expected
+    /// Does an extra seek first to move the cursor
+    #[proptest]
+    fn seeking_from_cursor(
+        #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
+        #[strategy(read_size_strategy())] read_size: usize,
+        #[strategy(0f64..=1f64)] seek_pos1_fraction: f64,
+        #[strategy(0f64..=1f64)] seek_pos2_fraction: f64,
+    ) {
+        let (mut reader, buf_whole) = prepare_seek_test_data(&content, read_size);
+        let seek_pos1 = calc_seek_pos(seek_pos1_fraction, &buf_whole);
+        let seek_pos2 = calc_seek_pos(seek_pos2_fraction, &buf_whole);
+        block_on(reader.seek(SeekFrom::Start(seek_pos1))).unwrap();
+
+        let reported_pos = seek_read_and_verify(
+            reader,
+            read_size,
+            SeekFrom::Current(seek_pos2 as i64 - seek_pos1 as i64),
+            buf_whole.as_slice(),
+        );
+        assert!(reported_pos == seek_pos2);
     }
 
     /// Test that reading multiple single bytes inside the zip file with absolute seeks
@@ -1468,29 +1540,14 @@ mod test {
         #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
         #[strategy(proptest::collection::vec(0f64..=1f64, 1..100))] byte_positions_f: Vec<f64>,
     ) {
-        let mut builder: Builder<&[u8]> = Builder::new();
-        content.iter().for_each(|(name, value)| {
-            builder.add_entry(name.clone(), value.as_ref()).unwrap();
-        });
-
-        let mut zippity = pin!(builder.clone().build());
-        let size = zippity.size();
-        let buf_whole = block_on(read_to_vec(zippity.as_mut(), 8192)).unwrap();
-        assert!(size == (buf_whole.len() as u64));
-
-        dbg!(size);
-
+        let (mut reader, buf_whole) = prepare_seek_test_data(&content, 8192);
         for fraction in byte_positions_f {
-            let seek_pos = (fraction * size as f64).floor() as u64;
-            dbg!(seek_pos);
-            assert!(
-                seek_pos < size,
-                "Test construction: The position must be inside the file"
-            );
+            let seek_pos = calc_seek_pos(fraction, &buf_whole);
+
             let expected = buf_whole[seek_pos as usize];
 
-            block_on(zippity.seek(SeekFrom::Start(seek_pos))).unwrap();
-            let actual = block_on(zippity.read_u8()).unwrap();
+            block_on(reader.seek(SeekFrom::Start(seek_pos))).unwrap();
+            let actual = block_on(reader.read_u8()).unwrap();
             assert!(actual == expected);
         }
     }
