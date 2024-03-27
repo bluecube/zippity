@@ -1571,6 +1571,9 @@ mod test {
     /// Either pre-fills the CRC from ground truth run or not.
     /// In all cases compares the remainder of the seek with ground truth
     /// generated without seeking and without pre-filled CRC.
+    ///
+    /// Since this is a gray box test, it is potentially fragile wrt changes
+    /// to the `Chunk` design of the reader.
     #[test_case(false, false; "No cached CRC, seeking within data")]
     #[test_case(false, true; "No cached CRC, seeking past the data")]
     #[test_case(true, false; "Cached CRC, seeking within data")]
