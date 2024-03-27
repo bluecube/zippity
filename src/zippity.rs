@@ -184,6 +184,8 @@ impl<D: EntryData> ReaderEntry<D> {
         ctx: &mut Context<'_>,
         read_buffer: &mut Vec<u8>,
     ) -> Poll<Result<u32>> {
+        const READ_SIZE: usize = 8192;
+
         if let Some(crc) = self.crc32 {
             return Poll::Ready(Ok(crc));
         }
@@ -191,10 +193,12 @@ impl<D: EntryData> ReaderEntry<D> {
         let mut file_reader = ready!(self.get_reader(pinned.as_mut(), ctx))?;
 
         assert!(read_buffer.is_empty());
-        read_buffer.resize(8192, 0);
+        read_buffer.reserve(READ_SIZE);
+        let mut read_buffer_wrapped =
+            ReadBuf::uninit(&mut read_buffer.spare_capacity_mut()[..READ_SIZE]);
 
         loop {
-            let mut read_buffer_wrapped = ReadBuf::new(read_buffer.as_mut_slice());
+            read_buffer_wrapped.clear();
             let remaining_before = read_buffer_wrapped.remaining();
             ready!(file_reader
                 .as_mut()
@@ -204,10 +208,13 @@ impl<D: EntryData> ReaderEntry<D> {
             }
         }
 
+        // We started with an empty vector (assert before the loop) and only ever touched its
+        // spare capacity => the vector should be still empty.
+        assert!(read_buffer.is_empty());
+
         let crc32 = file_reader.get_crc32();
 
         pinned.set(ReaderPinned::Nothing);
-        read_buffer.clear();
 
         self.crc32 = Some(crc32);
 
