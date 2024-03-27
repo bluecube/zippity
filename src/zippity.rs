@@ -681,7 +681,7 @@ impl ReadState {
             }
 
             if let Chunk::Finished = self.current_chunk {
-                return Poll::Ready(Ok(()));
+                break;
             }
 
             let current_chunk_size = self.current_chunk.size(entries);
@@ -1550,6 +1550,29 @@ mod test {
             let actual = block_on(reader.read_u8()).unwrap();
             assert!(actual == expected);
         }
+    }
+
+    /// Test that seeking to a valid location in a zip file using SeekFrom::Start works as expected
+    #[proptest]
+    fn tell(
+        #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
+        #[strategy(1usize..100usize)] read_size: usize,
+        #[strategy(0f64..=1f64)] seek_pos_fraction: f64,
+    ) {
+        let (mut reader, buf_whole) = prepare_seek_test_data(&content, read_size);
+        dbg!(buf_whole.len());
+        assert!(reader.tell() == 0);
+        let seek_pos = calc_seek_pos(seek_pos_fraction, &buf_whole);
+        block_on(reader.seek(SeekFrom::Start(seek_pos))).unwrap();
+        assert!(reader.tell() == seek_pos);
+        dbg!(seek_pos);
+
+        let mut buffer = Vec::new();
+        buffer.resize(read_size, 0);
+        let bytes_read = block_on(reader.read(buffer.as_mut_slice())).unwrap();
+        dbg!(bytes_read);
+
+        assert!(reader.tell() == seek_pos + bytes_read as u64);
     }
 
     #[test]

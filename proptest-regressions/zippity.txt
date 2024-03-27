@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 13ac55e1e2aded9583c44c210a2b6f0c59518f077d4d20b1a5068467fb875d80 # shrinks to input = _ResultCanBeUnzippedArgs { content: {"0": []}, read_size: 8192 
+cc 7ad71f936202a146508e4dd3622566c5ffa2b25892fd709e604ca99748a3f809 # shrinks to input = _TellArgs { content: {}, read_size: 8192, seek_pos_fraction: 0.0 }
