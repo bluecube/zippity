@@ -859,6 +859,7 @@ mod test {
     use assert_matches::assert_matches;
     use proptest::strategy::Strategy;
     use std::{collections::HashMap, io::ErrorKind, pin::pin};
+    use test_case::test_case;
     use test_strategy::proptest;
     use tokio::io::{AsyncReadExt, AsyncSeekExt};
     use tokio_test::block_on;
@@ -1555,5 +1556,67 @@ mod test {
 
             assert!(local_sizes[&zippity.entries[i].name] == entry_local_size);
         }
+    }
+
+    /// Gray box test that verifies behavior of CRC recalculation.
+    /// Either seeks within file data (possibility to recalculate CRC when
+    /// producing remaining data), or after the file data (has to be recalculated separately).
+    /// Either pre-fills the CRC from ground truth run or not.
+    /// In all cases compares the remainder of the seek with ground truth
+    /// generated without seeking and without pre-filled CRC.
+    #[test_case(false, false; "No cached CRC, seeking within data")]
+    #[test_case(false, true; "No cached CRC, seeking past the data")]
+    #[test_case(true, false; "Cached CRC, seeking within data")]
+    #[test_case(true, true; "Cached CRC, seeking past the data")]
+    fn crc_recalculation_with_seek(pre_fill_crc: bool, seek_past_data: bool) {
+        let test_data: Vec<u8> = (0..(8192 + 1)).map(|v| (v & 0xff) as u8).collect();
+        // The test data is larger than 8k so that we always have to loop more than once in the crc recalculation code
+
+        let mut builder1 = Builder::<&[u8]>::new();
+        builder1
+            .add_entry("X".to_owned(), test_data.as_slice())
+            .unwrap();
+
+        let mut reader1 = pin!(builder1.build());
+        let whole_zip = block_on(read_to_vec(reader1.as_mut(), 8192)).unwrap();
+
+        let entry_crc = {
+            let mut crc_it = reader1.crc32s();
+            let pair = crc_it.next().expect("There should be exactly one item");
+            assert!(crc_it.next() == None, "There should be exactly one item");
+            assert!(
+                pair.0 == "X",
+                "The item recovered must have the expected name"
+            );
+            pair.1
+        };
+
+        let mut builder2 = Builder::<&[u8]>::new();
+        let entry = builder2
+            .add_entry("X".to_owned(), test_data.as_slice())
+            .unwrap();
+        if pre_fill_crc {
+            entry.crc32(entry_crc);
+        }
+        let mut reader2 = pin!(builder2.build());
+
+        if seek_past_data {
+            block_on(reader2.as_mut().seek(SeekFrom::Start(
+                test_data.len() as u64
+                    + Chunk::LocalHeader { entry_index: 0 }.size(reader1.entries.as_slice()),
+            )))
+            .unwrap();
+        } else {
+            block_on(
+                reader2
+                    .as_mut()
+                    .seek(SeekFrom::Start(test_data.len() as u64)),
+            )
+            .unwrap();
+        }
+
+        let zip_after_seek = block_on(read_to_vec(reader2.as_mut(), 8192)).unwrap();
+
+        assert!(zip_after_seek.as_slice() == &whole_zip[whole_zip.len() - zip_after_seek.len()..])
     }
 }
