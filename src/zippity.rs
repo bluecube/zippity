@@ -828,15 +828,15 @@ impl<D: EntryData> AsyncSeek for Reader<D> {
     fn start_seek(self: Pin<&mut Self>, position: SeekFrom) -> Result<()> {
         let resolve_offset = |base: u64, offset: i64| -> Result<u64> {
             if let Some(result) = base.checked_add_signed(offset) {
-                if result <= self.size() {
-                    return Ok(result);
-                }
+                Ok(result)
+            } else if offset < 0 {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    ZippityError::SeekingBeforeStart,
+                ))
+            } else {
+                core::panic!("Attempting to seek to a position that causes u64 overflow");
             }
-
-            Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                ZippityError::SeekingOutsideOfFile,
-            ))
         };
         let pos = match position {
             SeekFrom::Start(pos) => pos,
@@ -1550,6 +1550,43 @@ mod test {
             let actual = block_on(reader.read_u8()).unwrap();
             assert!(actual == expected);
         }
+    }
+
+    /// Test that seeking to a negative location results in an error.
+    #[proptest]
+    fn seeking_before_start(distance: u8) {
+        let mut reader = Builder::<()>::new().build();
+        let seek_offset = -(distance as i64) - 1;
+        let err = block_on(reader.seek(SeekFrom::Current(seek_offset))).unwrap_err();
+        dbg!(&err);
+        assert!(err.kind() == ErrorKind::InvalidInput);
+        let message = format!("{}", err.into_inner().unwrap());
+
+        assert!(message.contains("before"));
+    }
+
+    /// Test that seeking to a valid location in a zip file using SeekFrom::Start works as expected
+    #[proptest]
+    fn seeking_after_end_from_start(distance: u8) {
+        let mut reader = pin!(Builder::<()>::new().build());
+        let seek_pos = reader.size() + distance as u64;
+        let reported_position = block_on(reader.seek(SeekFrom::Start(seek_pos))).unwrap();
+        assert!(reported_position == seek_pos);
+
+        let remaining_content = block_on(read_to_vec(reader, 16)).unwrap();
+        assert!(remaining_content.is_empty());
+    }
+
+    /// Test that seeking to a valid location in a zip file using SeekFrom::Start works as expected
+    #[proptest]
+    fn seeking_after_end_from_current(distance: u8) {
+        let mut reader = pin!(Builder::<()>::new().build());
+        let seek_position = reader.size() as i64 + distance as i64;
+        let reported_position = block_on(reader.seek(SeekFrom::Current(seek_position))).unwrap();
+        assert!(reported_position == seek_position as u64);
+
+        let remaining_content = block_on(read_to_vec(reader, 16)).unwrap();
+        assert!(remaining_content.is_empty());
     }
 
     /// Test that seeking to a valid location in a zip file using SeekFrom::Start works as expected

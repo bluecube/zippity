@@ -12,6 +12,6 @@ pub enum ZippityError {
         expected_size: u64,
         actual_size: u64,
     },
-    #[error("Attempting to seek outside of the file")]
-    SeekingOutsideOfFile,
+    #[error("Attempting to seek before the start of the file")]
+    SeekingBeforeStart,
 }
