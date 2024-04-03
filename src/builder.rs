@@ -18,14 +18,13 @@ impl<D: EntryData> BuilderEntry<D> {
         self.crc32 = Some(crc32);
         self
     }
-    fn get_local_size(&self, name: &str) -> u64 {
+    fn get_local_size(&self, name: &str, data_size: u64) -> u64 {
         let local_header = structs::LocalFileHeader::packed_size();
         let zip64_extra_data = structs::Zip64ExtraField::packed_size();
         let filename = name.len() as u64;
-        let data = self.data.size();
         let data_descriptor = structs::DataDescriptor64::packed_size();
 
-        local_header + zip64_extra_data + filename + data + data_descriptor
+        local_header + zip64_extra_data + filename + data_size + data_descriptor
     }
 
     fn get_cd_header_size(name: &str) -> u64 {
@@ -92,11 +91,12 @@ impl<D: EntryData> Builder<D> {
             .entries
             .into_iter()
             .map(|(name, entry)| {
-                let size = entry.get_local_size(&name);
+                let data_size = entry.data.size();
+                let local_size = entry.get_local_size(&name, data_size);
                 let offset_copy = offset;
-                offset += size;
+                offset += local_size;
                 cd_size += BuilderEntry::<D>::get_cd_header_size(&name);
-                ReaderEntry::new(name, entry.data, offset_copy, entry.crc32)
+                ReaderEntry::new(name, entry.data, offset_copy, entry.crc32, data_size)
             })
             .collect();
 
@@ -156,7 +156,7 @@ mod test {
         let local_sizes: HashMap<String, u64> = builder
             .entries
             .iter()
-            .map(|(k, v)| (k.clone(), v.get_local_size(k)))
+            .map(|(k, v)| (k.clone(), v.get_local_size(k, v.data.size())))
             .collect();
 
         let zippity = builder.build();

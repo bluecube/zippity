@@ -21,17 +21,21 @@ pub const ZIP64_VERSION_TO_EXTRACT: u8 = 45;
 pub(crate) struct ReaderEntry<D: EntryData> {
     name: String,
     data: D,
+    /// Offset of the entry's local header (first mention in the output) in the file
     offset: u64,
     crc32: Option<u32>,
+    /// Number of bytes of the entry data, cached from EntryData::size()
+    size: u64,
 }
 
 impl<D: EntryData> ReaderEntry<D> {
-    pub(crate) fn new(name: String, data: D, offset: u64, crc32: Option<u32>) -> Self {
+    pub(crate) fn new(name: String, data: D, offset: u64, crc32: Option<u32>, size: u64) -> Self {
         Self {
             name,
             data,
             offset,
             crc32,
+            size,
         }
     }
 
@@ -148,7 +152,7 @@ impl Chunk {
                     + entries[*entry_index].name.len() as u64
                     + structs::Zip64ExtraField::packed_size()
             }
-            Chunk::FileData { entry_index } => entries[*entry_index].data.size(),
+            Chunk::FileData { entry_index } => entries[*entry_index].size,
             Chunk::DataDescriptor { entry_index: _ } => structs::DataDescriptor64::packed_size(),
             Chunk::CDFileHeader { entry_index } => {
                 structs::CentralDirectoryHeader::packed_size()
@@ -477,8 +481,8 @@ impl ReadState {
             structs::DataDescriptor64 {
                 signature: structs::DataDescriptor64::SIGNATURE,
                 crc32,
-                compressed_size: entry.data.size(),
-                uncompressed_size: entry.data.size(),
+                compressed_size: entry.size,
+                uncompressed_size: entry.size,
             },
             output,
         );
@@ -529,8 +533,8 @@ impl ReadState {
             structs::Zip64ExtraField {
                 tag: structs::Zip64ExtraField::TAG,
                 size: structs::Zip64ExtraField::packed_size_u16() - 4,
-                uncompressed_size: entry.data.size(),
-                compressed_size: entry.data.size(),
+                uncompressed_size: entry.size,
+                compressed_size: entry.size,
                 offset: entry.offset,
             },
             output,
