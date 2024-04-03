@@ -824,11 +824,7 @@ mod test {
             position: 0,
         };
 
-        let mut buf_backing = Vec::new();
-        buf_backing.resize(
-            initial_output_content.len() + output_buffer_extra_size + 8,
-            0,
-        );
+        let mut buf_backing = vec![0; initial_output_content.len() + output_buffer_extra_size + 8];
         let mut buf = ReadBuf::new(buf_backing.as_mut_slice());
         buf.put_slice(initial_output_content.as_slice());
 
@@ -864,8 +860,7 @@ mod test {
             position: 0,
         };
 
-        let mut buf_backing = Vec::new();
-        buf_backing.resize(initial_output_content.len() + output_buffer_extra_size, 0);
+        let mut buf_backing = vec![0; initial_output_content.len() + output_buffer_extra_size];
         let mut buf = ReadBuf::new(buf_backing.as_mut_slice());
         buf.put_slice(initial_output_content.as_slice());
 
@@ -893,11 +888,7 @@ mod test {
             position: 0,
         };
 
-        let mut buf_backing = Vec::new();
-        buf_backing.resize(
-            initial_output_content.len() + output_buffer_extra_size + 1, // Always have room for at least 1 byte to read
-            0,
-        );
+        let mut buf_backing = vec![0; initial_output_content.len() + output_buffer_extra_size + 1]; // Always have room for at least 1 byte to read
         let mut buf = ReadBuf::new(buf_backing.as_mut_slice());
         buf.put_slice(initial_output_content.as_slice());
 
@@ -935,11 +926,7 @@ mod test {
             position: 0,
         };
 
-        let mut buf_backing = Vec::new();
-        buf_backing.resize(
-            initial_output_content.len() + output_buffer_extra_size + 1, // Always have room for at least 1 byte to read
-            0,
-        );
+        let mut buf_backing = vec![0; initial_output_content.len() + output_buffer_extra_size + 1]; // Always have room for at least 1 byte to read
         let mut buf = ReadBuf::new(buf_backing.as_mut_slice());
         buf.put_slice(initial_output_content.as_slice());
 
@@ -978,11 +965,8 @@ mod test {
             position: 0,
         };
 
-        let mut buf_backing = Vec::new();
-        buf_backing.resize(
-            initial_output_content.len() + output_buffer_extra_size + test_data.len(),
-            0,
-        );
+        let mut buf_backing =
+            vec![0; initial_output_content.len() + output_buffer_extra_size + test_data.len()];
         let mut buf = ReadBuf::new(buf_backing.as_mut_slice());
         buf.put_slice(initial_output_content.as_slice());
 
@@ -1019,8 +1003,7 @@ mod test {
             position: 0,
         };
 
-        let mut buf_backing = Vec::new();
-        buf_backing.resize(initial_output_content.len() + output_buffer_extra_size, 0);
+        let mut buf_backing = vec![0; initial_output_content.len() + output_buffer_extra_size];
         let mut buf = ReadBuf::new(buf_backing.as_mut_slice());
         buf.put_slice(initial_output_content.as_slice());
 
@@ -1058,11 +1041,7 @@ mod test {
             position: 0,
         };
 
-        let mut buf_backing = Vec::new();
-        buf_backing.resize(
-            initial_output_content.len() + output_buffer_extra_size + 1, // Always have room for at least 1 byte to read
-            0,
-        );
+        let mut buf_backing = vec![0; initial_output_content.len() + output_buffer_extra_size + 1]; // Always have room for at least 1 byte to read
         let mut buf = ReadBuf::new(buf_backing.as_mut_slice());
         buf.put_slice(initial_output_content.as_slice());
 
@@ -1101,11 +1080,7 @@ mod test {
             position: 0,
         };
 
-        let mut buf_backing = Vec::new();
-        buf_backing.resize(
-            initial_output_content.len() + output_buffer_extra_size + 1, // Always have room for at least 1 byte to read
-            0,
-        );
+        let mut buf_backing = vec![0; initial_output_content.len() + output_buffer_extra_size + 1]; // Always have room for at least 1 byte to read
         let mut buf = ReadBuf::new(buf_backing.as_mut_slice());
         buf.put_slice(initial_output_content.as_slice());
 
@@ -1347,7 +1322,7 @@ mod test {
 
     /// Convert a floating point between 0 and 1 and a byte array to a seekable
     /// offset position within the file.
-    fn calc_seek_pos(pos_f: f64, buf_whole: &Vec<u8>) -> u64 {
+    fn calc_seek_pos(pos_f: f64, buf_whole: &[u8]) -> u64 {
         let seek_pos = (pos_f * buf_whole.len() as f64).floor() as u64;
         assert!(
             seek_pos < buf_whole.len() as u64,
@@ -1505,8 +1480,7 @@ mod test {
         assert!(reader.tell() == seek_pos);
         dbg!(seek_pos);
 
-        let mut buffer = Vec::new();
-        buffer.resize(read_size, 0);
+        let mut buffer = vec![0; read_size];
         let bytes_read = block_on(reader.read(buffer.as_mut_slice())).unwrap();
         dbg!(bytes_read);
 

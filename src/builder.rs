@@ -135,12 +135,7 @@ mod test {
         let mut builder: Builder<()> = Builder::new();
 
         let name_length = u16::MAX as usize + 1;
-        let e = builder
-            .add_entry(
-                std::iter::repeat("X").take(name_length).collect::<String>(),
-                (),
-            )
-            .unwrap_err();
+        let e = builder.add_entry("X".repeat(name_length), ()).unwrap_err();
         assert_matches!(e, ZippityError::TooLongEntryName { entry_name } if entry_name.len() == name_length);
     }
 
