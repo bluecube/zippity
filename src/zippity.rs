@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::future::Future;
 use std::io::{Error, Result, SeekFrom};
 use std::pin::Pin;
@@ -18,134 +17,8 @@ use crate::structs::PackedStructZippityExt;
 /// Minimum version needed to extract the zip64 extensions required by zippity
 pub const ZIP64_VERSION_TO_EXTRACT: u8 = 45;
 
-#[derive(Clone, Debug)]
-pub struct BuilderEntry<D> {
-    data: D,
-    crc32: Option<u32>,
-}
-
-impl<D: EntryData> BuilderEntry<D> {
-    pub fn crc32(&mut self, crc32: u32) -> &mut Self {
-        self.crc32 = Some(crc32);
-        self
-    }
-    fn get_local_size(&self, name: &str) -> u64 {
-        let local_header = structs::LocalFileHeader::packed_size();
-        let zip64_extra_data = structs::Zip64ExtraField::packed_size();
-        let filename = name.len() as u64;
-        let data = self.data.size();
-        let data_descriptor = structs::DataDescriptor64::packed_size();
-
-        local_header + zip64_extra_data + filename + data + data_descriptor
-    }
-
-    fn get_cd_header_size(name: &str) -> u64 {
-        let filename = name.len() as u64;
-        let cd_entry = structs::CentralDirectoryHeader::packed_size();
-        let zip64_extra_data = structs::Zip64ExtraField::packed_size();
-
-        cd_entry + zip64_extra_data + filename
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct Builder<D: EntryData> {
-    // TODO: BTreeMap? Really? Perhaps we should use something that preserves insertion order.
-    entries: BTreeMap<String, BuilderEntry<D>>,
-}
-
-impl<D: EntryData> Default for Builder<D> {
-    fn default() -> Self {
-        Builder::new()
-    }
-}
-
-impl<D: EntryData> Builder<D> {
-    /// Creates a new empty Builder.
-    pub fn new() -> Self {
-        Builder {
-            entries: BTreeMap::new(),
-        }
-    }
-
-    /// Adds an entry to the zip file.
-    /// The returned reference can be used to add metadata to the entry.
-    /// # Errors
-    /// Will return an error if `name` is longer than `u16::MAX` (limitation of Zip format)
-    pub fn add_entry<T: Into<D>>(
-        &mut self,
-        name: String,
-        data: T,
-    ) -> std::result::Result<&mut BuilderEntry<D>, ZippityError> {
-        use std::collections::btree_map::Entry::{Occupied, Vacant};
-
-        if u16::try_from(name.len()).is_err() {
-            return Err(ZippityError::TooLongEntryName { entry_name: name });
-        }
-        let map_vacant_entry = match self.entries.entry(name) {
-            Vacant(e) => e,
-            Occupied(e) => {
-                return Err(ZippityError::DuplicateEntryName {
-                    entry_name: e.key().clone(),
-                });
-            }
-        };
-
-        let data = data.into();
-        let inserted = map_vacant_entry.insert(BuilderEntry { data, crc32: None });
-        Ok(inserted)
-    }
-
-    pub fn build(self) -> Reader<D> {
-        let mut offset: u64 = 0;
-        let mut cd_size: u64 = 0;
-        let entries: Vec<_> = self
-            .entries
-            .into_iter()
-            .map(|(name, entry)| {
-                let size = entry.get_local_size(&name);
-                let offset_copy = offset;
-                offset += size;
-                cd_size += BuilderEntry::<D>::get_cd_header_size(&name);
-                ReaderEntry {
-                    name,
-                    data: entry.data,
-                    offset: offset_copy,
-                    crc32: entry.crc32,
-                }
-            })
-            .collect();
-
-        let cd_offset = offset;
-        let eocd_size = structs::Zip64EndOfCentralDirectoryRecord::packed_size()
-            + structs::Zip64EndOfCentralDirectoryLocator::packed_size()
-            + structs::EndOfCentralDirectory::packed_size();
-        let eocd_offset = cd_offset + cd_size;
-        let total_size = cd_offset + cd_size + eocd_size;
-        let current_chunk = Chunk::new(&entries);
-
-        Reader {
-            sizes: Sizes {
-                cd_offset,
-                cd_size,
-                eocd_offset,
-                total_size,
-            },
-            entries,
-            read_state: ReadState {
-                current_chunk,
-                chunk_processed_size: 0,
-                position: 0,
-                staging_buffer: Vec::new(),
-                to_skip: 0,
-            },
-            pinned: ReaderPinned::Nothing,
-        }
-    }
-}
-
 #[derive(Debug)]
-struct ReaderEntry<D: EntryData> {
+pub(crate) struct ReaderEntry<D: EntryData> {
     name: String,
     data: D,
     offset: u64,
@@ -153,6 +26,20 @@ struct ReaderEntry<D: EntryData> {
 }
 
 impl<D: EntryData> ReaderEntry<D> {
+    pub(crate) fn new(name: String, data: D, offset: u64, crc32: Option<u32>) -> Self {
+        Self {
+            name,
+            data,
+            offset,
+            crc32,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn get_name(&self) -> &str {
+        self.name.as_str()
+    }
+
     fn get_reader<'a>(
         &self,
         mut pinned: Pin<&'a mut ReaderPinned<D>>,
@@ -222,13 +109,22 @@ impl<D: EntryData> ReaderEntry<D> {
     }
 }
 
-#[derive(Debug)]
-enum Chunk {
-    LocalHeader { entry_index: usize },
-    FileData { entry_index: usize },
-    DataDescriptor { entry_index: usize },
-    CDFileHeader { entry_index: usize },
+#[derive(Debug, Default)]
+pub(crate) enum Chunk {
+    LocalHeader {
+        entry_index: usize,
+    },
+    FileData {
+        entry_index: usize,
+    },
+    DataDescriptor {
+        entry_index: usize,
+    },
+    CDFileHeader {
+        entry_index: usize,
+    },
     Eocd,
+    #[default]
     Finished,
 }
 
@@ -241,7 +137,7 @@ impl Chunk {
         }
     }
 
-    fn size<D: EntryData>(&self, entries: &[ReaderEntry<D>]) -> u64 {
+    pub(crate) fn size<D: EntryData>(&self, entries: &[ReaderEntry<D>]) -> u64 {
         match self {
             Chunk::LocalHeader { entry_index } => {
                 structs::LocalFileHeader::packed_size()
@@ -264,7 +160,7 @@ impl Chunk {
         }
     }
 
-    fn next<D: EntryData>(&self, entries: &[ReaderEntry<D>]) -> Chunk {
+    pub(crate) fn next<D: EntryData>(&self, entries: &[ReaderEntry<D>]) -> Chunk {
         match self {
             Chunk::LocalHeader { entry_index } => Chunk::FileData {
                 entry_index: *entry_index,
@@ -304,6 +200,7 @@ enum ReaderPinned<D: EntryData> {
 /// Parts of the state of reader that don't need pinning.
 /// As a result, these can be accessed using a mutable reference
 /// and can have mutable methods
+#[derive(Debug, Default)]
 struct ReadState {
     /// Which chunk we are currently reading
     current_chunk: Chunk,
@@ -340,15 +237,39 @@ pub struct Reader<D: EntryData> {
     pinned: ReaderPinned<D>,
 }
 
+impl<D: EntryData> Reader<D> {
+    pub(crate) fn new(sizes: Sizes, entries: Vec<ReaderEntry<D>>) -> Self {
+        let read_state = ReadState::new(&entries);
+        Reader {
+            sizes,
+            entries,
+            read_state,
+            pinned: ReaderPinned::Nothing,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn get_entries(&self) -> &[ReaderEntry<D>] {
+        &self.entries
+    }
+}
+
 #[derive(Debug)]
-struct Sizes {
-    cd_offset: u64,
-    cd_size: u64,
-    eocd_offset: u64,
-    total_size: u64,
+pub(crate) struct Sizes {
+    pub(crate) cd_offset: u64,
+    pub(crate) cd_size: u64,
+    pub(crate) eocd_offset: u64,
+    pub(crate) total_size: u64,
 }
 
 impl ReadState {
+    fn new<D: EntryData>(entries: &[ReaderEntry<D>]) -> Self {
+        Self {
+            current_chunk: Chunk::new(entries),
+            ..Default::default()
+        }
+    }
+
     /// Read packed struct.
     /// Either reads to `output` (fast path), or to `self.staging_buffer`
     /// Never writes to output, if staging buffer is non empty, or if we need to skip something
@@ -861,24 +782,18 @@ impl<D: EntryData> AsyncSeek for Reader<D> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::test_util::{measure_size, read_size_strategy, read_to_vec, ZerosReader};
+    use crate::test_util::{
+        content_strategy, measure_size, read_size_strategy, read_to_vec, ZerosReader,
+    };
+    use crate::Builder;
     use assert2::assert;
-    use assert_matches::assert_matches;
-    use proptest::strategy::Strategy;
-    use std::{collections::HashMap, io::ErrorKind, pin::pin};
+    use std::collections::HashMap;
+    use std::{io::ErrorKind, pin::pin};
     use test_case::test_case;
     use test_strategy::proptest;
     use tokio::io::{AsyncReadExt, AsyncSeekExt};
     use tokio_test::block_on;
     use zip::read::ZipArchive;
-
-    fn content_strategy() -> impl Strategy<Value = HashMap<String, Vec<u8>>> {
-        proptest::collection::hash_map(
-            ".*",
-            proptest::collection::vec(proptest::bits::u8::ANY, 0..100),
-            0..100,
-        )
-    }
 
     use packed_struct::prelude::*;
     #[derive(Debug, PackedStruct)]
@@ -893,20 +808,6 @@ mod test {
                 v: 0x0102030405060708,
             }
         }
-    }
-
-    #[test]
-    fn too_long_enty_name() {
-        let mut builder: Builder<()> = Builder::new();
-
-        let name_length = u16::MAX as usize + 1;
-        let e = builder
-            .add_entry(
-                std::iter::repeat("X").take(name_length).collect::<String>(),
-                (),
-            )
-            .unwrap_err();
-        assert_matches!(e, ZippityError::TooLongEntryName { entry_name } if entry_name.len() == name_length);
     }
 
     #[proptest]
@@ -1639,47 +1540,6 @@ mod test {
         let message = format!("{}", e.into_inner().unwrap());
 
         assert!(message.contains("xxx"));
-    }
-
-    /// Tests an internal property of the builder -- that the sizes generated
-    /// during building actually match the chunk size.
-    #[proptest]
-    fn local_size_matches_chunks(
-        #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
-    ) {
-        let mut builder: Builder<&[u8]> = Builder::new();
-
-        content.iter().for_each(|(name, value)| {
-            builder.add_entry(name.clone(), value.as_ref()).unwrap();
-        });
-
-        let local_sizes: HashMap<String, u64> = builder
-            .entries
-            .iter()
-            .map(|(k, v)| (k.clone(), v.get_local_size(k)))
-            .collect();
-
-        let zippity = builder.build();
-
-        for i in 0..zippity.entries.len() {
-            let mut entry_local_size = 0;
-            let mut chunk = Chunk::LocalHeader { entry_index: i };
-            loop {
-                dbg!(&chunk);
-                dbg!(chunk.size(&zippity.entries));
-                entry_local_size += chunk.size(&zippity.entries);
-                chunk = chunk.next(&zippity.entries);
-
-                if let Chunk::LocalHeader { entry_index: _ } = chunk {
-                    break;
-                }
-                if let Chunk::CDFileHeader { entry_index: _ } = chunk {
-                    break;
-                }
-            }
-
-            assert!(local_sizes[&zippity.entries[i].name] == entry_local_size);
-        }
     }
 
     /// Gray box test that verifies behavior of CRC recalculation.
