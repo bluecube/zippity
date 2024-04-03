@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use crate::{
     entry_data::EntryData,
     error::ZippityError,
+    reader::{Reader, ReaderEntry, Sizes},
     structs::{self, PackedStructZippityExt},
-    zippity::{Reader, ReaderEntry, Sizes},
 };
 
 #[derive(Clone, Debug)]
@@ -145,7 +145,7 @@ mod test {
     fn local_size_matches_chunks(
         #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
     ) {
-        use crate::zippity::Chunk;
+        use crate::reader::Chunk;
 
         let mut builder: Builder<&[u8]> = Builder::new();
 
