@@ -98,6 +98,10 @@ impl<D: EntryData> ReaderEntry<D> {
         // We started with an empty vector (assert before the loop) and only ever touched its
         // spare capacity => the vector should be still empty.
         assert!(read_buffer.is_empty());
+        assert!(
+            file_reader.is_crc_valid(),
+            "We didn't seek in the reader, so the CRC should be correctly calculated"
+        );
 
         let crc32 = file_reader.get_crc32();
 
