@@ -75,33 +75,23 @@ impl<D: EntryData> ReaderEntry<D> {
         ctx: &mut Context<'_>,
         read_buffer: &mut Vec<u8>,
     ) -> Poll<Result<u32>> {
-        const READ_SIZE: usize = 8192;
-
         if let Some(crc) = self.crc32 {
             return Poll::Ready(Ok(crc));
         }
 
         let mut file_reader = ready!(self.get_reader(pinned.as_mut(), ctx))?;
 
-        assert!(read_buffer.is_empty());
-        read_buffer.reserve(READ_SIZE);
-        let mut read_buffer_wrapped =
-            ReadBuf::uninit(&mut read_buffer.spare_capacity_mut()[..READ_SIZE]);
+        let mut read_buffer = get_read_buf(read_buffer);
 
         loop {
-            read_buffer_wrapped.clear();
-            let remaining_before = read_buffer_wrapped.remaining();
-            ready!(file_reader
-                .as_mut()
-                .poll_read(ctx, &mut read_buffer_wrapped))?;
-            if read_buffer_wrapped.remaining() == remaining_before {
+            read_buffer.clear();
+            assert!(read_buffer.filled().is_empty());
+            ready!(file_reader.as_mut().poll_read(ctx, &mut read_buffer))?;
+            if read_buffer.filled().is_empty() {
                 break;
             }
         }
 
-        // We started with an empty vector (assert before the loop) and only ever touched its
-        // spare capacity => the vector should be still empty.
-        assert!(read_buffer.is_empty());
         assert!(
             file_reader.is_crc_valid(),
             "We didn't seek in the reader, so the CRC should be correctly calculated"
@@ -413,26 +403,44 @@ impl ReadState {
 
         let mut file_reader = ready!(entry.get_reader(pinned.as_mut(), ctx))?;
 
-        /*while self.to_skip > 0 {
-            // Construct a temporary output buffer in the unused part of the real output buffer,
-            // but not large enough to read more than the ammount to skip
-            // TODO: Wouldn't it be better to use the staging buffer for this?
-            let mut tmp_output = output.take(self.to_skip.try_into().unwrap_or(usize::MAX));
-            assert!(tmp_output.filled().is_empty());
-
-            ready!(file_reader.as_mut().poll_read(ctx, &mut tmp_output))?;
-
-            self.chunk_processed_size += tmp_output.filled().len() as u64;
-            self.to_skip -= tmp_output.filled().len() as u64;
-        }*/
-        // TODO: We might want to decide to recompute the CRC instead
         if self.to_skip > 0 {
-            let pos_after_seek = ready!(file_reader
-                .as_mut()
-                .seek(ctx, SeekFrom::Start(self.to_skip)))?;
-            assert!(pos_after_seek == self.to_skip);
-            self.chunk_processed_size += self.to_skip;
-            self.to_skip = 0;
+            // If there is some part of the file to skip, we have to decide whether to
+            // seek to the new position, or to read the file whole.
+            // As a performance optimization, we choose to read the data if the CRC
+            // is not yet known (could have been set from cached values during construction),
+            // to avoid re-opening the file and re-reading data when the CRC is requested in
+            // data descriptor.
+            // TODO: Measure that the complexity is worth it (but how?).
+            if entry.crc32.is_none() {
+                let mut read_buffer = get_read_buf(&mut self.staging_buffer);
+
+                while self.to_skip > 0 {
+                    read_buffer.clear();
+
+                    // Limit the read size so that we don't go over the amount to skip
+                    let limit = self.to_skip.try_into().unwrap_or(usize::MAX);
+                    let mut read_buffer = read_buffer.take(limit);
+
+                    assert!(read_buffer.filled().is_empty());
+                    ready!(file_reader.as_mut().poll_read(ctx, &mut read_buffer))?;
+
+                    self.chunk_processed_size += read_buffer.filled().len() as u64;
+                    self.to_skip -= read_buffer.filled().len() as u64;
+
+                    if read_buffer.filled().is_empty() {
+                        // This means that we've skipped over the whole file.
+                        // -> the reported size was wrong (and we will return an error later).
+                        break;
+                    }
+                }
+            } else {
+                let pos_after_seek = ready!(file_reader
+                    .as_mut()
+                    .seek(ctx, SeekFrom::Start(self.to_skip)))?;
+                assert!(pos_after_seek == self.to_skip);
+                self.chunk_processed_size += self.to_skip;
+                self.to_skip = 0;
+            }
         }
 
         let remaining_before_poll = output.remaining();
@@ -785,6 +793,12 @@ impl<D: EntryData> AsyncSeek for Reader<D> {
     fn poll_complete(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<u64>> {
         Poll::Ready(Ok(self.tell()))
     }
+}
+
+fn get_read_buf(vec: &mut Vec<u8>) -> ReadBuf {
+    const READ_SIZE: usize = 8192;
+    vec.reserve(READ_SIZE);
+    ReadBuf::uninit(&mut vec.spare_capacity_mut()[..READ_SIZE])
 }
 
 #[cfg(test)]
