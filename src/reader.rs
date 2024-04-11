@@ -805,7 +805,7 @@ fn get_read_buf(vec: &mut Vec<u8>) -> ReadBuf {
 mod test {
     use super::*;
     use crate::test_util::{
-        content_strategy, measure_size, read_size_strategy, read_to_vec, ZerosReader,
+        content_strategy, measure_size, read_size_strategy, read_to_vec, LazyReader, ZerosReader,
     };
     use crate::Builder;
     use assert2::assert;
@@ -1538,27 +1538,15 @@ mod test {
         assert!(message.contains("xxx"));
     }
 
-    /// Gray box test that verifies behavior of CRC recalculation.
-    /// Either seeks within file data (possibility to recalculate CRC when
-    /// producing remaining data), or after the file data (has to be recalculated separately).
-    /// Either pre-fills the CRC from ground truth run or not.
-    /// In all cases compares the remainder of the seek with ground truth
-    /// generated without seeking and without pre-filled CRC.
-    ///
-    /// Since this is a gray box test, it is potentially fragile wrt changes
-    /// to the `Chunk` design of the reader.
-    #[test_case(false, false; "No cached CRC, seeking within data")]
-    #[test_case(false, true; "No cached CRC, seeking past the data")]
-    #[test_case(true, false; "Cached CRC, seeking within data")]
-    #[test_case(true, true; "Cached CRC, seeking past the data")]
-    fn crc_recalculation_with_seek(pre_fill_crc: bool, seek_past_data: bool) {
-        let test_data: Vec<u8> = (0..(8192 + 1)).map(|v| (v & 0xff) as u8).collect();
+    fn crc_recalculation_with_seek_internal<'a, T: From<&'a [u8]> + EntryData>(
+        test_data: &'a [u8],
+        pre_fill_crc: bool,
+        seek_past_data: bool,
+    ) {
         // The test data is larger than 8k so that we always have to loop more than once in the crc recalculation code
 
-        let mut builder1 = Builder::<&[u8]>::new();
-        builder1
-            .add_entry("X".to_owned(), test_data.as_slice())
-            .unwrap();
+        let mut builder1 = Builder::<T>::new();
+        builder1.add_entry("X".to_owned(), test_data).unwrap();
 
         let mut reader1 = pin!(builder1.build());
         let whole_zip = block_on(read_to_vec(reader1.as_mut(), 8192)).unwrap();
@@ -1574,10 +1562,8 @@ mod test {
             pair.1
         };
 
-        let mut builder2 = Builder::<&[u8]>::new();
-        let entry = builder2
-            .add_entry("X".to_owned(), test_data.as_slice())
-            .unwrap();
+        let mut builder2 = Builder::<T>::new();
+        let entry = builder2.add_entry("X".to_owned(), test_data).unwrap();
         if pre_fill_crc {
             entry.crc32(entry_crc);
         }
@@ -1601,5 +1587,39 @@ mod test {
         let zip_after_seek = block_on(read_to_vec(reader2.as_mut(), 8192)).unwrap();
 
         assert!(zip_after_seek.as_slice() == &whole_zip[whole_zip.len() - zip_after_seek.len()..])
+    }
+
+    /// Gray box test that verifies behavior of CRC recalculation.
+    /// Either seeks within file data (possibility to recalculate CRC when
+    /// producing remaining data), or after the file data (has to be recalculated separately).
+    /// Either pre-fills the CRC from ground truth run or not.
+    /// In all cases compares the remainder of the seek with ground truth
+    /// generated without seeking and without pre-filled CRC.
+    ///
+    /// Since this is a gray box test, it is potentially fragile wrt changes
+    /// to the `Chunk` design of the reader.
+    #[test_case(false, false, false; "No cached CRC, seeking within data")]
+    #[test_case(false, true, false; "No cached CRC, seeking past the data")]
+    #[test_case(true, false, false; "Cached CRC, seeking within data")]
+    #[test_case(true, true, false; "Cached CRC, seeking past the data")]
+    #[test_case(false, false, true; "No cached CRC, seeking within data, lazy reader")]
+    #[test_case(false, true, true; "No cached CRC, seeking past the data, lazy reader")]
+    #[test_case(true, false, true; "Cached CRC, seeking within data, lazy reader")]
+    #[test_case(true, true, true; "Cached CRC, seeking past the data, lazy reader")]
+    fn crc_recalculation_with_seek(pre_fill_crc: bool, seek_past_data: bool, lazy_reader: bool) {
+        let test_data: Vec<u8> = (0..(8192 + 1)).map(|v| (v & 0xff) as u8).collect();
+        if !lazy_reader {
+            crc_recalculation_with_seek_internal::<&[u8]>(
+                test_data.as_slice(),
+                pre_fill_crc,
+                seek_past_data,
+            )
+        } else {
+            crc_recalculation_with_seek_internal::<LazyReader>(
+                test_data.as_slice(),
+                pre_fill_crc,
+                seek_past_data,
+            )
+        }
     }
 }
