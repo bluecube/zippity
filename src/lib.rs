@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 #![forbid(unsafe_code)]
 
 mod builder;
@@ -12,7 +13,3 @@ pub use builder::{Builder, BuilderEntry};
 pub use entry_data::EntryData;
 pub use error::ZippityError;
 pub use reader::Reader;
-
-#[cfg(doctest)]
-#[doc = include_str!("../README.md")]
-struct ReadMe;

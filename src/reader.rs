@@ -684,27 +684,27 @@ impl ReadState {
 
     /// Always succeeds, seeking past end of file causes `tell()` to return the
     /// set position and reads returning empty buffers (=EOF).
-    fn seek_bytes<D: EntryData>(
+    fn seek_from_start<D: EntryData>(
         &mut self,
         sizes: &Sizes,
         entries: &[ReaderEntry<D>],
         mut pinned: Pin<&mut ReaderPinned<D>>,
-        position: u64,
+        offset: u64,
     ) {
-        let (chunk, chunk_position) = if position >= sizes.eocd_offset {
+        let (chunk, chunk_position) = if offset >= sizes.eocd_offset {
             (Chunk::Eocd, sizes.eocd_offset)
-        } else if position >= sizes.cd_offset {
+        } else if offset >= sizes.cd_offset {
             assert!(!entries.is_empty());
             (Chunk::CDFileHeader { entry_index: 0 }, sizes.cd_offset)
         } else {
             assert!(!entries.is_empty());
-            let entry_index = match entries.binary_search_by_key(&position, |entry| entry.offset) {
+            let entry_index = match entries.binary_search_by_key(&offset, |entry| entry.offset) {
                 Ok(index) => index,
                 Err(index) => index - 1,
             };
             assert!(entry_index < entries.len());
-            assert!(entries[entry_index].offset <= position);
-            assert!(entry_index == entries.len() - 1 || entries[entry_index + 1].offset > position);
+            assert!(entries[entry_index].offset <= offset);
+            assert!(entry_index == entries.len() - 1 || entries[entry_index + 1].offset > offset);
             (
                 Chunk::LocalHeader { entry_index },
                 entries[entry_index].offset,
@@ -713,9 +713,9 @@ impl ReadState {
 
         self.current_chunk = chunk;
         self.chunk_processed_size = 0;
-        self.position = position;
+        self.position = offset;
         self.staging_buffer.clear();
-        self.to_skip = position - chunk_position;
+        self.to_skip = offset - chunk_position;
 
         pinned.set(ReaderPinned::Nothing);
     }
