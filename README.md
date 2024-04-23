@@ -1,6 +1,6 @@
 # Zippity
 
-A library for creating a ZIP file on the fly. Currently work in progress.
+Library for asynchronously creating a ZIP file on the fly.
 
 ## Features
 
