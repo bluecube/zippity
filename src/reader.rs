@@ -682,13 +682,14 @@ impl ReadState {
         Poll::Ready(Ok(()))
     }
 
+    /// Seeks to a given offset inside the file.
+    /// After seeking using this method, the corresponding `pinned` field has to be cleared too.
     /// Always succeeds, seeking past end of file causes `tell()` to return the
     /// set position and reads returning empty buffers (=EOF).
     fn seek_from_start<D: EntryData>(
         &mut self,
         sizes: &Sizes,
         entries: &[ReaderEntry<D>],
-        mut pinned: Pin<&mut ReaderPinned<D>>,
         offset: u64,
     ) {
         let (chunk, chunk_position) = if offset >= sizes.eocd_offset {
@@ -716,8 +717,6 @@ impl ReadState {
         self.position = offset;
         self.staging_buffer.clear();
         self.to_skip = offset - chunk_position;
-
-        pinned.set(ReaderPinned::Nothing);
     }
 }
 
@@ -725,6 +724,32 @@ impl<D: EntryData> Reader<D> {
     /// Return the total size of the file in bytes.
     pub fn size(&self) -> u64 {
         self.sizes.total_size
+    }
+
+    /// Seeks to given offset from start of zip file.
+    ///
+    /// This version allows seeking before the Reader is pinned.
+    ///
+    /// Always succeeds, seeking past end of file causes `tell()` to return the
+    /// set offset and reads returning empty buffers (=EOF).
+    pub fn seek_from_start_mut(&mut self, offset: u64) {
+        self.read_state
+            .seek_from_start(&self.sizes, self.entries.as_slice(), offset);
+        self.pinned = ReaderPinned::Nothing;
+    }
+
+    /// Seeks to given offset from start of zip file.
+    ///
+    /// This is the version for pinned Reader.
+    ///
+    /// Always succeeds, seeking past end of file causes `tell()` to return the
+    /// set offset and reads returning empty buffers (=EOF).
+    pub fn seek_from_start_pinned(self: Pin<&mut Self>, offset: u64) {
+        let mut projected = self.project();
+        projected
+            .read_state
+            .seek_from_start(projected.sizes, projected.entries.as_slice(), offset);
+        projected.pinned.set(ReaderPinned::Nothing);
     }
 
     /// Return current position in the ZIP file in bytes.
@@ -781,10 +806,7 @@ impl<D: EntryData> AsyncSeek for Reader<D> {
             SeekFrom::End(offset) => resolve_offset(self.size(), offset)?,
         };
 
-        let projected = self.project();
-        projected
-            .read_state
-            .seek_bytes(projected.sizes, projected.entries, projected.pinned, pos);
+        self.seek_from_start_pinned(pos);
         // TODO: This way the seek is lazy, meaning that it will prefer not to do anything
         // until there is a time to actually read. Is this ok?
         Ok(())
