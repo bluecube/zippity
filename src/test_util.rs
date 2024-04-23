@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use assert2::assert;
 use pin_project::pin_project;
 use proptest::strategy::Strategy;

@@ -7,6 +7,8 @@ mod entry_data;
 mod error;
 mod reader;
 mod structs;
+
+#[cfg(test)]
 mod test_util;
 
 pub use builder::{Builder, BuilderEntry};
