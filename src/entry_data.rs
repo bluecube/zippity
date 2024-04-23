@@ -7,7 +7,11 @@ pub trait EntryData {
     type Reader: AsyncRead + AsyncSeek;
     type ReaderFuture: Future<Output = Result<Self::Reader>>;
 
+    /// Returns the size of the data of the entry, that will be read through get_reader.
     fn size(&self) -> u64;
+    // TODO: Should size() be async too?
+
+    /// Returns a future that when awaited will provide the reader for file data.
     fn get_reader(&self) -> Self::ReaderFuture;
 }
 
