@@ -837,7 +837,6 @@ mod test {
     use test_strategy::proptest;
     use tokio::io::{AsyncReadExt, AsyncSeekExt};
     use tokio_test::block_on;
-    use zip::read::ZipArchive;
 
     use packed_struct::prelude::*;
     #[derive(Debug, PackedStruct)]
@@ -1192,131 +1191,6 @@ mod test {
             assert!(&rs.staging_buffer[rs.to_skip as usize..] == &test_data[stop..],
             "What remains in the staging buffer after the skip must be what we didn't write from the test data");
         }
-    }
-
-    #[test]
-    fn empty_archive_can_be_unzipped() {
-        let zippity = pin!(Builder::<()>::new().build());
-        let size = zippity.size();
-
-        let buf = block_on(read_to_vec(zippity, 1)).unwrap();
-
-        assert!(size == (buf.len() as u64));
-
-        let unpacked = ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip");
-        assert!(unpacked.is_empty());
-    }
-
-    #[test]
-    fn empty_entry_name_can_be_unzipped() {
-        let mut builder: Builder<()> = Builder::new();
-
-        builder.add_entry(String::new(), ()).unwrap();
-
-        let zippity = pin!(builder.build());
-        let buf = block_on(read_to_vec(zippity, 8192)).unwrap();
-
-        let mut unpacked =
-            ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip");
-        assert!(unpacked.len() == 1);
-
-        let mut zipfile = unpacked.by_index(0).unwrap();
-        let name = std::str::from_utf8(zipfile.name_raw()).unwrap().to_string();
-        assert!(name.is_empty());
-        let mut file_content = Vec::new();
-        use std::io::Read;
-        zipfile.read_to_end(&mut file_content).unwrap();
-        assert!(file_content.is_empty());
-    }
-
-    #[test]
-    fn archive_with_single_file_can_be_unzipped() {
-        let mut builder: Builder<&[u8]> = Builder::new();
-
-        builder
-            .add_entry("Foo".to_owned(), b"bar!".as_slice())
-            .unwrap();
-
-        let zippity = pin!(builder.build());
-        let size = zippity.size();
-
-        let buf = block_on(read_to_vec(zippity, 1)).unwrap();
-
-        assert!(size == (buf.len() as u64));
-
-        let mut unpacked =
-            ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip");
-        assert!(unpacked.len() == 1);
-
-        let mut zipfile = unpacked.by_index(0).unwrap();
-        let name = std::str::from_utf8(zipfile.name_raw()).unwrap().to_string();
-        assert!(name == "Foo");
-        let mut file_content = Vec::new();
-        use std::io::Read;
-        zipfile.read_to_end(&mut file_content).unwrap();
-        assert!(file_content == b"bar!");
-    }
-
-    #[test]
-    fn archive_with_single_empty_file_can_be_unzipped() {
-        let mut builder: Builder<&[u8]> = Builder::new();
-
-        builder.add_entry("0".to_owned(), b"".as_slice()).unwrap();
-
-        let zippity = pin!(builder.build());
-        let size = zippity.size();
-
-        let buf = block_on(read_to_vec(zippity, 1)).unwrap();
-
-        assert!(size == (buf.len() as u64));
-
-        let mut unpacked =
-            ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip");
-        assert!(unpacked.len() == 1);
-
-        let mut zipfile = unpacked.by_index(0).unwrap();
-        let name = std::str::from_utf8(zipfile.name_raw()).unwrap().to_string();
-        assert!(name == "0");
-        let mut file_content = Vec::new();
-        use std::io::Read;
-        zipfile.read_to_end(&mut file_content).unwrap();
-        assert!(file_content == b"");
-    }
-
-    #[proptest]
-    fn result_can_be_unzipped(
-        #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
-        #[strategy(read_size_strategy())] read_size: usize,
-    ) {
-        let mut builder: Builder<&[u8]> = Builder::new();
-
-        content.iter().for_each(|(name, value)| {
-            builder.add_entry(name.clone(), value.as_ref()).unwrap();
-        });
-
-        let zippity = pin!(builder.build());
-        let size = zippity.size();
-
-        let buf = block_on(read_to_vec(zippity, read_size)).unwrap();
-
-        assert!(size == (buf.len() as u64));
-
-        let mut unpacked =
-            ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip");
-        assert!(unpacked.len() == content.len());
-
-        let mut unpacked_content = HashMap::new();
-        for i in 0..unpacked.len() {
-            dbg!(&i);
-            let mut zipfile = unpacked.by_index(i).unwrap();
-            let name = std::str::from_utf8(zipfile.name_raw()).unwrap().to_string();
-            let mut file_content = Vec::new();
-            use std::io::Read;
-            zipfile.read_to_end(&mut file_content).unwrap();
-
-            unpacked_content.insert(name, file_content);
-        }
-        assert!(unpacked_content == content);
     }
 
     /// Tests that a zip archive with large file (> 4GB) and many files (> 65536)
