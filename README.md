@@ -54,3 +54,4 @@ copy(&mut zippity, &mut sink()).await.unwrap();
 | Name | Description | Default |
 | ---- | ----------- | ------- |
 | `tokio-file` | Adds support for `TokioFileEntry` being used as a entry data through Tokio file. | yes |
+| `actix-web-adapter` | Adds`actix_web::Reponder` implementation to `zippity::Reader` | no |
