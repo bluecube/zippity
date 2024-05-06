@@ -3,6 +3,7 @@ use pin_project::pin_project;
 use proptest::strategy::Strategy;
 use std::future::Future;
 use std::io::Cursor;
+use std::ops::DerefMut;
 use std::{collections::HashMap, io::Result};
 
 use std::pin::Pin;
@@ -118,11 +119,12 @@ impl AsyncSeek for ZerosReader {
 }
 
 impl EntryData for ZerosReader {
+    type SizeFuture = std::future::Ready<Result<u64>>;
     type Reader = Self;
     type ReaderFuture = std::future::Ready<Result<Self>>;
 
-    fn size(&self) -> u64 {
-        self.size
+    fn size(&self) -> Self::SizeFuture {
+        std::future::ready(Ok(self.size))
     }
 
     fn get_reader(&self) -> Self::ReaderFuture {
@@ -195,7 +197,7 @@ impl<'a> Future for LazyReaderFuture<'a> {
     type Output = std::io::Result<LazyReader<'a>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        std::ops::DerefMut::deref_mut(&mut self).delay = !self.delay;
+        (&mut self).deref_mut().delay = !self.delay;
         if !self.delay {
             cx.waker().wake_by_ref();
             Poll::Pending
@@ -208,12 +210,36 @@ impl<'a> Future for LazyReaderFuture<'a> {
     }
 }
 
+pub struct LazyReaderSizeFuture {
+    size: u64,
+    delay: bool,
+}
+
+impl Future for LazyReaderSizeFuture {
+    type Output = Result<u64>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        (&mut self).deref_mut().delay = !self.delay;
+        if !self.delay {
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        } else {
+            Poll::Ready(Result::Ok(self.size))
+        }
+    }
+}
+
 impl<'a> EntryData for LazyReader<'a> {
+    type SizeFuture = LazyReaderSizeFuture;
     type Reader = LazyReader<'a>;
     type ReaderFuture = LazyReaderFuture<'a>;
 
-    fn size(&self) -> u64 {
-        self.inner.get_ref().size()
+    fn size(&self) -> Self::SizeFuture {
+        let s = self.inner.get_ref().len() as u64;
+        LazyReaderSizeFuture {
+            size: s,
+            delay: true,
+        }
     }
 
     fn get_reader(&self) -> Self::ReaderFuture {

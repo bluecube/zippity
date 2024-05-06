@@ -18,7 +18,7 @@ pub fn content_strategy() -> impl Strategy<Value = HashMap<String, Vec<u8>>> {
 
 #[test]
 fn empty_archive() {
-    let mut zippity = pin!(Builder::<()>::new().build());
+    let mut zippity = pin!(block_on(Builder::<()>::new().build()).unwrap());
     let size = zippity.size();
 
     let mut buf = Vec::new();
@@ -36,7 +36,7 @@ fn empty_entry_name() {
 
     builder.add_entry(String::new(), ()).unwrap();
 
-    let mut zippity = pin!(builder.build());
+    let mut zippity = pin!(block_on(builder.build()).unwrap());
     let mut buf = Vec::new();
     block_on(zippity.read_to_end(&mut buf)).unwrap();
 
@@ -60,7 +60,7 @@ fn archive_with_single_file() {
         .add_entry("Foo".to_owned(), b"bar!".as_slice())
         .unwrap();
 
-    let mut zippity = pin!(builder.build());
+    let mut zippity = pin!(block_on(builder.build()).unwrap());
     let size = zippity.size();
 
     let mut buf = Vec::new();
@@ -86,7 +86,7 @@ fn archive_with_single_empty_file() {
 
     builder.add_entry("0".to_owned(), b"".as_slice()).unwrap();
 
-    let mut zippity = pin!(builder.build());
+    let mut zippity = pin!(block_on(builder.build()).unwrap());
     let size = zippity.size();
 
     let mut buf = Vec::new();
@@ -114,7 +114,7 @@ fn any_archive(#[strategy(content_strategy())] content: HashMap<String, Vec<u8>>
         builder.add_entry(name.clone(), value.as_ref()).unwrap();
     });
 
-    let mut zippity = pin!(builder.build());
+    let mut zippity = pin!(block_on(builder.build()).unwrap());
     let size = zippity.size();
 
     let mut buf = Vec::new();

@@ -400,8 +400,6 @@ impl ReadState {
         ctx: &mut Context<'_>,
         output: &mut ReadBuf<'_>,
     ) -> Poll<Result<bool>> {
-        let expected_size = entry.data.size();
-
         let mut file_reader = ready!(entry.get_reader(pinned.as_mut(), ctx))?;
 
         if self.to_skip > 0 {
@@ -456,12 +454,12 @@ impl ReadState {
 
             pinned.set(ReaderPinned::Nothing);
 
-            if self.chunk_processed_size == expected_size {
+            if self.chunk_processed_size == entry.size {
                 Poll::Ready(Ok(true)) // We're done with this state
             } else {
                 Poll::Ready(Err(Error::other(ZippityError::LengthMismatch {
                     entry_name: entry.name.clone(),
-                    expected_size,
+                    expected_size: entry.size,
                     actual_size: self.chunk_processed_size,
                 })))
             }
@@ -1211,7 +1209,7 @@ mod test {
                 .add_entry(format!("Empty file {}", i), ZerosReader::new(0))
                 .unwrap();
         }
-        let zippity = pin!(builder.build());
+        let zippity = pin!(block_on(builder.build()).unwrap());
 
         let expected_size = zippity.size();
         let actual_size = block_on(measure_size(zippity)).unwrap();
@@ -1230,10 +1228,10 @@ mod test {
             builder.add_entry(name.clone(), value.as_ref()).unwrap();
         });
 
-        let zippity_whole = pin!(builder.clone().build());
+        let zippity_whole = pin!(block_on(builder.clone().build()).unwrap());
         let buf_whole = block_on(read_to_vec(zippity_whole, read_size)).unwrap();
 
-        let zippity_ret = builder.build();
+        let zippity_ret = block_on(builder.build()).unwrap();
 
         (zippity_ret, buf_whole)
     }
@@ -1349,7 +1347,7 @@ mod test {
     /// Test that seeking to a negative location results in an error.
     #[proptest]
     fn seeking_before_start(distance: u8) {
-        let mut reader = Builder::<()>::new().build();
+        let mut reader = pin!(block_on(Builder::<()>::new().build()).unwrap());
         let seek_offset = -(distance as i64) - 1;
         let err = block_on(reader.seek(SeekFrom::Current(seek_offset))).unwrap_err();
         dbg!(&err);
@@ -1362,7 +1360,7 @@ mod test {
     /// Test that seeking to a valid location in a zip file using SeekFrom::Start works as expected
     #[proptest]
     fn seeking_after_end_from_start(distance: u8) {
-        let mut reader = pin!(Builder::<()>::new().build());
+        let mut reader = pin!(block_on(Builder::<()>::new().build()).unwrap());
         let seek_pos = reader.size() + distance as u64;
         let reported_position = block_on(reader.seek(SeekFrom::Start(seek_pos))).unwrap();
         assert!(reported_position == seek_pos);
@@ -1374,7 +1372,7 @@ mod test {
     /// Test that seeking to a valid location in a zip file using SeekFrom::Start works as expected
     #[proptest]
     fn seeking_after_end_from_current(distance: u8) {
-        let mut reader = pin!(Builder::<()>::new().build());
+        let mut reader = pin!(block_on(Builder::<()>::new().build()).unwrap());
         let seek_position = reader.size() as i64 + distance as i64;
         let reported_position = block_on(reader.seek(SeekFrom::Current(seek_position))).unwrap();
         assert!(reported_position == seek_position as u64);
@@ -1410,11 +1408,12 @@ mod test {
         /// Struct that reports data size 100, but actually its 1
         struct BadSize();
         impl EntryData for BadSize {
+            type SizeFuture = std::future::Ready<Result<u64>>;
             type Reader = std::io::Cursor<&'static [u8]>;
             type ReaderFuture = std::future::Ready<Result<Self::Reader>>;
 
-            fn size(&self) -> u64 {
-                100
+            fn size(&self) -> Self::SizeFuture {
+                std::future::ready(Ok(100))
             }
 
             fn get_reader(&self) -> Self::ReaderFuture {
@@ -1425,7 +1424,7 @@ mod test {
         let mut builder: Builder<BadSize> = Builder::new();
         builder.add_entry("xxx".into(), BadSize()).unwrap();
 
-        let zippity = pin!(builder.build());
+        let zippity = pin!(block_on(builder.build()).unwrap());
         let e = block_on(read_to_vec(zippity, 1024)).unwrap_err();
 
         assert!(e.kind() == ErrorKind::Other);
@@ -1444,7 +1443,7 @@ mod test {
         let mut builder1 = Builder::<T>::new();
         builder1.add_entry("X".to_owned(), test_data).unwrap();
 
-        let mut reader1 = pin!(builder1.build());
+        let mut reader1 = pin!(block_on(builder1.build()).unwrap());
         let whole_zip = block_on(read_to_vec(reader1.as_mut(), 8192)).unwrap();
 
         let entry_crc = {
@@ -1463,7 +1462,7 @@ mod test {
         if pre_fill_crc {
             entry.crc32(entry_crc);
         }
-        let mut reader2 = pin!(builder2.build());
+        let mut reader2 = pin!(block_on(builder2.build()).unwrap());
 
         if seek_past_data {
             block_on(reader2.as_mut().seek(SeekFrom::Start(

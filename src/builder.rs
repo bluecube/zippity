@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::io::Result;
 
 use crate::{
     entry_data::EntryData,
@@ -84,21 +85,27 @@ impl<D: EntryData> Builder<D> {
         Ok(inserted)
     }
 
-    pub fn build(self) -> Reader<D> {
+    pub async fn build(self) -> Result<Reader<D>> {
         let mut offset: u64 = 0;
         let mut cd_size: u64 = 0;
-        let entries: Vec<_> = self
-            .entries
-            .into_iter()
-            .map(|(name, entry)| {
-                let data_size = entry.data.size();
+        let entries = {
+            let mut entries = Vec::with_capacity(self.entries.len());
+            for (name, entry) in self.entries.into_iter() {
+                let data_size = entry.data.size().await?;
                 let local_size = entry.get_local_size(&name, data_size);
-                let offset_copy = offset;
+                let offset_before_entry = offset;
                 offset += local_size;
                 cd_size += BuilderEntry::<D>::get_cd_header_size(&name);
-                ReaderEntry::new(name, entry.data, offset_copy, entry.crc32, data_size)
-            })
-            .collect();
+                entries.push(ReaderEntry::new(
+                    name,
+                    entry.data,
+                    offset_before_entry,
+                    entry.crc32,
+                    data_size,
+                ));
+            }
+            entries
+        };
 
         let cd_offset = offset;
         let eocd_size = structs::Zip64EndOfCentralDirectoryRecord::packed_size()
@@ -107,7 +114,7 @@ impl<D: EntryData> Builder<D> {
         let eocd_offset = cd_offset + cd_size;
         let total_size = cd_offset + cd_size + eocd_size;
 
-        Reader::new(
+        Ok(Reader::new(
             Sizes {
                 cd_offset,
                 cd_size,
@@ -115,7 +122,7 @@ impl<D: EntryData> Builder<D> {
                 total_size,
             },
             entries,
-        )
+        ))
     }
 }
 
@@ -125,6 +132,7 @@ mod test {
     use crate::test_util::content_strategy;
     use assert2::assert;
     use assert_matches::assert_matches;
+    use tokio_test::block_on;
 
     use std::collections::HashMap;
 
@@ -156,10 +164,13 @@ mod test {
         let local_sizes: HashMap<String, u64> = builder
             .entries
             .iter()
-            .map(|(k, v)| (k.clone(), v.get_local_size(k, v.data.size())))
+            .map(|(k, v)| {
+                let size = block_on(v.data.size()).unwrap();
+                (k.clone(), v.get_local_size(k, size))
+            })
             .collect();
 
-        let zippity = builder.build();
+        let zippity = block_on(builder.build()).unwrap();
 
         let entries = zippity.get_entries();
 
