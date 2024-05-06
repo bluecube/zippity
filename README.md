@@ -12,7 +12,7 @@ Library for asynchronously creating a ZIP file on the fly.
 - [x] Allows seeking in the file (implements `tokio::io::AsyncSeek`)
 - [X] Supports files on the filesystem as entries.
   - [ ] Supports tokio_uring
-- [ ] Supports integration with Actix Web (implements `actix_web::Responder`) behind feature flag
+- [X] Supports integration with Actix Web (see [Reader::into_responder()])
 
 ## Non-features
 - Compression: The zip only uses store method.
@@ -55,4 +55,5 @@ copy(&mut zippity, &mut sink()).await.unwrap();
 | ---- | ----------- | ------- |
 | `tokio-file` | Adds support for `TokioFileEntry` being used as a entry data through Tokio file. | yes |
 | `bytes` | Implement `EntryData` for `bytes::Bytes`, and provide method `into_bytes_stream()` for `Reader`. | no |
+| `actix-web` | Adds`actix_web::Reponder` implementation to `zippity::Reader` | no |
 | `proptest` | Add module `zippity::proptest`, with strategies, and `proptest::arbitrary::Arbitrary` implementation for `Reader`. | no |

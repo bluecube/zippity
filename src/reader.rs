@@ -1740,6 +1740,7 @@ mod test {
         let cloned_data = read_to_vec(cloned, read_size).await.unwrap();
 
         assert!(cloned_data == original_data);
+    }
 
     /// Test that constructing an empty reader object works and provides no bytes.
     #[proptest(async = "tokio")]

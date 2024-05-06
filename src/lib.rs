@@ -8,6 +8,8 @@ mod error;
 mod reader;
 mod structs;
 
+#[cfg(feature = "actix-web")]
+mod actix_web;
 #[cfg(feature = "tokio-file")]
 mod tokio_file;
 
