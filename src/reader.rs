@@ -16,6 +16,7 @@ use crate::structs::PackedStructZippityExt;
 
 /// Minimum version needed to extract the zip64 extensions required by zippity
 pub const ZIP64_VERSION_TO_EXTRACT: u8 = 45;
+pub(crate) const READ_SIZE: usize = 8192;
 
 #[derive(Debug)]
 pub(crate) struct ReaderEntry<D: EntryData> {
@@ -818,7 +819,6 @@ impl<D: EntryData> AsyncSeek for Reader<D> {
 }
 
 fn get_read_buf(vec: &mut Vec<u8>) -> ReadBuf {
-    const READ_SIZE: usize = 8192;
     vec.reserve(READ_SIZE);
     ReadBuf::uninit(&mut vec.spare_capacity_mut()[..READ_SIZE])
 }
