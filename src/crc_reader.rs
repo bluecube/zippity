@@ -79,15 +79,14 @@ mod test {
     use assert2::assert;
     use std::pin::pin;
     use test_strategy::proptest;
-    use tokio_test::block_on;
 
-    #[proptest]
-    fn passes_through_data_and_crc(
+    #[proptest(async = "tokio")]
+    async fn passes_through_data_and_crc(
         content: Vec<u8>,
         #[strategy(read_size_strategy())] read_size: usize,
     ) {
         let mut reader = pin!(CrcReader::new(&content[..]));
-        let output = block_on(read_to_vec(reader.as_mut(), read_size)).unwrap();
+        let output = read_to_vec(reader.as_mut(), read_size).await.unwrap();
 
         assert!(output == content);
         assert!(reader.get_crc32() == crc32fast::hash(&content));
@@ -96,11 +95,11 @@ mod test {
     /// Verify a known example CRC value.
     /// The example is taken from unit tests from crate Zip:
     /// https://github.com/zip-rs/zip/blob/75e8f6bab5a6525014f6f52c6eb608ab46de48af/src/crc32.rs#L56
-    #[test]
-    fn known_crc() {
+    #[tokio::test]
+    async fn known_crc() {
         let data: &[u8] = b"1234";
         let mut reader = pin!(CrcReader::new(data));
-        let _ = block_on(read_to_vec(reader.as_mut(), data.len())).unwrap();
+        let _ = read_to_vec(reader.as_mut(), data.len()).await.unwrap();
         assert!(reader.get_crc32() == 0x9be3e0a3);
     }
 }

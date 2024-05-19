@@ -846,10 +846,8 @@ mod test {
     use assert2::assert;
     use std::collections::HashMap;
     use std::{io::ErrorKind, pin::pin};
-    use test_case::test_case;
     use test_strategy::proptest;
     use tokio::io::{AsyncReadExt, AsyncSeekExt};
-    use tokio_test::block_on;
 
     use packed_struct::prelude::*;
     #[derive(Debug, PackedStruct)]
@@ -1212,9 +1210,9 @@ mod test {
     /// Doesn't check that it unpacks correctly to keep the requirements low,
     /// only verifies that the expected and actual sizes match.
     /// This doesn't actually store the file or archive, but is still fairly slow.
-    #[test]
+    #[tokio::test]
     #[ignore = "this test is too slow"]
-    fn zip64_works() {
+    async fn zip64_works() {
         let mut builder = Builder::<ZerosReader>::new();
         builder
             .add_entry("Big file".to_owned(), ZerosReader::new(0x100000000))
@@ -1224,18 +1222,18 @@ mod test {
                 .add_entry(format!("Empty file {}", i), ZerosReader::new(0))
                 .unwrap();
         }
-        let zippity = pin!(block_on(builder.build()).unwrap());
+        let zippity = pin!(builder.build().await.unwrap());
 
         let expected_size = zippity.size();
-        let actual_size = block_on(measure_size(zippity)).unwrap();
+        let actual_size = measure_size(zippity).await.unwrap();
 
         assert!(actual_size == expected_size);
     }
 
     /// Tests that passing a LazyReader (that delays each async operation) ends up with the same
     /// archive as when using regular slice based input.
-    #[proptest]
-    fn lazy_reader_equal_result(
+    #[proptest(async = "tokio")]
+    async fn lazy_reader_equal_result(
         #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
         #[strategy(read_size_strategy())] read_size: usize,
     ) {
@@ -1251,17 +1249,17 @@ mod test {
                 .unwrap();
         });
 
-        let zippity_slice = pin!(block_on(builder_slice.build()).unwrap());
-        let output_slice = block_on(read_to_vec(zippity_slice, read_size)).unwrap();
-        let zippity_lazy = pin!(block_on(builder_lazy.build()).unwrap());
-        let output_lazy = block_on(read_to_vec(zippity_lazy, read_size)).unwrap();
+        let zippity_slice = pin!(builder_slice.build().await.unwrap());
+        let output_slice = read_to_vec(zippity_slice, read_size).await.unwrap();
+        let zippity_lazy = pin!(builder_lazy.build().await.unwrap());
+        let output_lazy = read_to_vec(zippity_lazy, read_size).await.unwrap();
 
         assert!(output_slice == output_lazy);
     }
 
     /// Prepare a reader with data from a hash map and a vector of the zip
     /// read as a whole
-    fn prepare_seek_test_data(
+    async fn prepare_seek_test_data(
         content: &HashMap<String, Vec<u8>>,
         read_size: usize,
     ) -> (Reader<&[u8]>, Vec<u8>) {
@@ -1270,10 +1268,10 @@ mod test {
             builder.add_entry(name.clone(), value.as_ref()).unwrap();
         });
 
-        let zippity_whole = pin!(block_on(builder.clone().build()).unwrap());
-        let buf_whole = block_on(read_to_vec(zippity_whole, read_size)).unwrap();
+        let zippity_whole = pin!(builder.clone().build().await.unwrap());
+        let buf_whole = read_to_vec(zippity_whole, read_size).await.unwrap();
 
-        let zippity_ret = block_on(builder.build()).unwrap();
+        let zippity_ret = builder.build().await.unwrap();
 
         (zippity_ret, buf_whole)
     }
@@ -1291,7 +1289,7 @@ mod test {
 
     /// Seek the reader to a given position and verify that the remaining data
     /// and returned position matches the end of the given ground truth data.
-    fn seek_read_and_verify<T: EntryData>(
+    async fn seek_read_and_verify<T: EntryData>(
         reader: Reader<T>,
         read_size: usize,
         seek_from: SeekFrom,
@@ -1299,8 +1297,8 @@ mod test {
     ) -> u64 {
         let mut reader = pin!(reader);
 
-        let seek_reported = block_on(reader.seek(seek_from)).unwrap();
-        let buf = block_on(read_to_vec(reader, read_size)).unwrap();
+        let seek_reported = reader.seek(seek_from).await.unwrap();
+        let buf = read_to_vec(reader, read_size).await.unwrap();
 
         assert!(buf.as_slice() == &ground_truth[seek_reported as usize..]);
 
@@ -1308,90 +1306,96 @@ mod test {
     }
 
     /// Test that seeking to a valid location in a zip file using SeekFrom::Start works as expected
-    #[proptest]
-    fn seeking_from_start(
+    #[proptest(async = "tokio")]
+    async fn seeking_from_start(
         #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
         #[strategy(read_size_strategy())] read_size: usize,
         #[strategy(0f64..=1f64)] seek_pos_fraction: f64,
     ) {
-        let (reader, buf_whole) = prepare_seek_test_data(&content, read_size);
+        let (reader, buf_whole) = prepare_seek_test_data(&content, read_size).await;
         let seek_pos = calc_seek_pos(seek_pos_fraction, &buf_whole);
         let reported_pos = seek_read_and_verify(
             reader,
             read_size,
             SeekFrom::Start(seek_pos),
             buf_whole.as_slice(),
-        );
+        )
+        .await;
         assert!(reported_pos == seek_pos);
     }
 
     /// Test that seeking to a valid location in a zip file using SeekFrom::End works as expected
-    #[proptest]
-    fn seeking_from_end(
+    #[proptest(async = "tokio")]
+    async fn seeking_from_end(
         #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
         #[strategy(read_size_strategy())] read_size: usize,
         #[strategy(0f64..=1f64)] seek_pos_fraction: f64,
     ) {
-        let (reader, buf_whole) = prepare_seek_test_data(&content, read_size);
+        let (reader, buf_whole) = prepare_seek_test_data(&content, read_size).await;
         let seek_pos = calc_seek_pos(seek_pos_fraction, &buf_whole);
         let reported_pos = seek_read_and_verify(
             reader,
             read_size,
             SeekFrom::End(seek_pos as i64 - buf_whole.len() as i64),
             buf_whole.as_slice(),
-        );
+        )
+        .await;
         assert!(reported_pos == seek_pos);
     }
 
     /// Test that seeking to a valid location in a zip file using SeekFrom::Current works as expected
     /// Does an extra seek first to move the cursor
-    #[proptest]
-    fn seeking_from_cursor(
+    #[proptest(async = "tokio")]
+    async fn seeking_from_cursor(
         #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
         #[strategy(read_size_strategy())] read_size: usize,
         #[strategy(0f64..=1f64)] seek_pos1_fraction: f64,
         #[strategy(0f64..=1f64)] seek_pos2_fraction: f64,
     ) {
-        let (mut reader, buf_whole) = prepare_seek_test_data(&content, read_size);
+        let (mut reader, buf_whole) = prepare_seek_test_data(&content, read_size).await;
         let seek_pos1 = calc_seek_pos(seek_pos1_fraction, &buf_whole);
         let seek_pos2 = calc_seek_pos(seek_pos2_fraction, &buf_whole);
-        block_on(reader.seek(SeekFrom::Start(seek_pos1))).unwrap();
+        reader.seek(SeekFrom::Start(seek_pos1)).await.unwrap();
 
         let reported_pos = seek_read_and_verify(
             reader,
             read_size,
             SeekFrom::Current(seek_pos2 as i64 - seek_pos1 as i64),
             buf_whole.as_slice(),
-        );
+        )
+        .await;
         assert!(reported_pos == seek_pos2);
     }
 
     /// Test that reading multiple single bytes inside the zip file with absolute seeks
     /// in between returns the same bytes as reading the whole file.
     /// Also tests reusing the zippity reader object.
-    #[proptest]
-    fn seeking_single_bytes(
+    #[proptest(async = "tokio")]
+    async fn seeking_single_bytes(
         #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
         #[strategy(proptest::collection::vec(0f64..=1f64, 1..100))] byte_positions_f: Vec<f64>,
     ) {
-        let (mut reader, buf_whole) = prepare_seek_test_data(&content, 8192);
+        let (mut reader, buf_whole) = prepare_seek_test_data(&content, 8192).await;
         for fraction in byte_positions_f {
             let seek_pos = calc_seek_pos(fraction, &buf_whole);
 
             let expected = buf_whole[seek_pos as usize];
 
-            block_on(reader.seek(SeekFrom::Start(seek_pos))).unwrap();
-            let actual = block_on(reader.read_u8()).unwrap();
+            reader.seek(SeekFrom::Start(seek_pos)).await.unwrap();
+            let actual = reader.read_u8().await.unwrap();
             assert!(actual == expected);
         }
     }
 
     /// Test that seeking to a negative location results in an error.
-    #[proptest]
-    fn seeking_before_start(distance: u8) {
-        let mut reader = pin!(block_on(Builder::<()>::new().build()).unwrap());
+    #[proptest(async = "tokio")]
+    async fn seeking_before_start(distance: u8) {
+        let mut reader = pin!(Builder::<()>::new().build().await.unwrap());
         let seek_offset = -(distance as i64) - 1;
-        let err = block_on(reader.seek(SeekFrom::Current(seek_offset))).unwrap_err();
+        let err = reader
+            .seek(SeekFrom::Current(seek_offset))
+            .await
+            .unwrap_err();
         dbg!(&err);
         assert!(err.kind() == ErrorKind::InvalidInput);
         let message = format!("{}", err.into_inner().unwrap());
@@ -1400,53 +1404,53 @@ mod test {
     }
 
     /// Test that seeking to a valid location in a zip file using SeekFrom::Start works as expected
-    #[proptest]
-    fn seeking_after_end_from_start(distance: u8) {
-        let mut reader = pin!(block_on(Builder::<()>::new().build()).unwrap());
+    #[proptest(async = "tokio")]
+    async fn seeking_after_end_from_start(distance: u8) {
+        let mut reader = pin!(Builder::<()>::new().build().await.unwrap());
         let seek_pos = reader.size() + distance as u64;
-        let reported_position = block_on(reader.seek(SeekFrom::Start(seek_pos))).unwrap();
+        let reported_position = reader.seek(SeekFrom::Start(seek_pos)).await.unwrap();
         assert!(reported_position == seek_pos);
 
-        let remaining_content = block_on(read_to_vec(reader, 16)).unwrap();
+        let remaining_content = read_to_vec(reader, 16).await.unwrap();
         assert!(remaining_content.is_empty());
     }
 
     /// Test that seeking to a valid location in a zip file using SeekFrom::Start works as expected
-    #[proptest]
-    fn seeking_after_end_from_current(distance: u8) {
-        let mut reader = pin!(block_on(Builder::<()>::new().build()).unwrap());
+    #[proptest(async = "tokio")]
+    async fn seeking_after_end_from_current(distance: u8) {
+        let mut reader = pin!(Builder::<()>::new().build().await.unwrap());
         let seek_position = reader.size() as i64 + distance as i64;
-        let reported_position = block_on(reader.seek(SeekFrom::Current(seek_position))).unwrap();
+        let reported_position = reader.seek(SeekFrom::Current(seek_position)).await.unwrap();
         assert!(reported_position == seek_position as u64);
 
-        let remaining_content = block_on(read_to_vec(reader, 16)).unwrap();
+        let remaining_content = read_to_vec(reader, 16).await.unwrap();
         assert!(remaining_content.is_empty());
     }
 
     /// Test that seeking to a valid location in a zip file using SeekFrom::Start works as expected
-    #[proptest]
-    fn tell(
+    #[proptest(async = "tokio")]
+    async fn tell(
         #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
         #[strategy(1usize..100usize)] read_size: usize,
         #[strategy(0f64..=1f64)] seek_pos_fraction: f64,
     ) {
-        let (mut reader, buf_whole) = prepare_seek_test_data(&content, read_size);
+        let (mut reader, buf_whole) = prepare_seek_test_data(&content, read_size).await;
         dbg!(buf_whole.len());
         assert!(reader.tell() == 0);
         let seek_pos = calc_seek_pos(seek_pos_fraction, &buf_whole);
-        block_on(reader.seek(SeekFrom::Start(seek_pos))).unwrap();
+        reader.seek(SeekFrom::Start(seek_pos)).await.unwrap();
         assert!(reader.tell() == seek_pos);
         dbg!(seek_pos);
 
         let mut buffer = vec![0; read_size];
-        let bytes_read = block_on(reader.read(buffer.as_mut_slice())).unwrap();
+        let bytes_read = reader.read(buffer.as_mut_slice()).await.unwrap();
         dbg!(bytes_read);
 
         assert!(reader.tell() == seek_pos + bytes_read as u64);
     }
 
-    #[test]
-    fn bad_size_entry_data_errors_out() {
+    #[tokio::test]
+    async fn bad_size_entry_data_errors_out() {
         /// Struct that reports data size 100, but actually its 1
         struct BadSize();
         impl EntryData for BadSize {
@@ -1466,8 +1470,8 @@ mod test {
         let mut builder: Builder<BadSize> = Builder::new();
         builder.add_entry("xxx".into(), BadSize()).unwrap();
 
-        let zippity = pin!(block_on(builder.build()).unwrap());
-        let e = block_on(read_to_vec(zippity, 1024)).unwrap_err();
+        let zippity = pin!(builder.build().await.unwrap());
+        let e = read_to_vec(zippity, 1024).await.unwrap_err();
 
         assert!(e.kind() == ErrorKind::Other);
         let message = format!("{}", e.into_inner().unwrap());
@@ -1475,88 +1479,92 @@ mod test {
         assert!(message.contains("xxx"));
     }
 
-    fn crc_recalculation_with_seek_internal<'a, T: From<&'a [u8]> + EntryData>(
-        test_data: &'a [u8],
-        pre_fill_crc: bool,
-        seek_past_data: bool,
-    ) {
-        // The test data is larger than 8k so that we always have to loop more than once in the crc recalculation code
+    mod crc_recalculation_with_seek {
+        use super::*;
+        use assert2::assert;
 
-        let mut builder1 = Builder::<T>::new();
-        builder1.add_entry("X".to_owned(), test_data).unwrap();
+        /// Gray box test that verifies behavior of CRC recalculation.
+        /// Either seeks within file data (possibility to recalculate CRC when
+        /// producing remaining data), or after the file data (has to be recalculated separately).
+        /// Either pre-fills the CRC from ground truth run or not.
+        /// In all cases compares the remainder of the seek with ground truth
+        /// generated without seeking and without pre-filled CRC.
+        ///
+        /// Since this is a gray box test, it is potentially fragile wrt changes
+        /// to the `Chunk` design of the reader.
+        async fn test_internal<'a, T: From<&'a [u8]> + EntryData>(
+            test_data: &'a [u8],
+            pre_fill_crc: bool,
+            seek_past_data: bool,
+        ) {
+            let mut builder1 = Builder::<T>::new();
+            builder1.add_entry("X".to_owned(), test_data).unwrap();
 
-        let mut reader1 = pin!(block_on(builder1.build()).unwrap());
-        let whole_zip = block_on(read_to_vec(reader1.as_mut(), 8192)).unwrap();
+            let mut reader1 = pin!(builder1.build().await.unwrap());
+            let whole_zip = read_to_vec(reader1.as_mut(), 8192).await.unwrap();
 
-        let entry_crc = {
-            let mut crc_it = reader1.crc32s();
-            let pair = crc_it.next().expect("There should be exactly one item");
-            assert!(crc_it.next() == None, "There should be exactly one item");
-            assert!(
-                pair.0 == "X",
-                "The item recovered must have the expected name"
-            );
-            pair.1
-        };
+            let entry_crc = {
+                let mut crc_it = reader1.crc32s();
+                let pair = crc_it.next().expect("There should be exactly one item");
+                assert!(crc_it.next() == None, "There should be exactly one item");
+                assert!(
+                    pair.0 == "X",
+                    "The item recovered must have the expected name"
+                );
+                pair.1
+            };
 
-        let mut builder2 = Builder::<T>::new();
-        let entry = builder2.add_entry("X".to_owned(), test_data).unwrap();
-        if pre_fill_crc {
-            entry.crc32(entry_crc);
-        }
-        let mut reader2 = pin!(block_on(builder2.build()).unwrap());
+            let mut builder2 = Builder::<T>::new();
+            let entry = builder2.add_entry("X".to_owned(), test_data).unwrap();
+            if pre_fill_crc {
+                entry.crc32(entry_crc);
+            }
+            let mut reader2 = pin!(builder2.build().await.unwrap());
 
-        if seek_past_data {
-            block_on(reader2.as_mut().seek(SeekFrom::Start(
-                test_data.len() as u64
-                    + Chunk::LocalHeader { entry_index: 0 }.size(reader1.entries.as_slice()),
-            )))
-            .unwrap();
-        } else {
-            block_on(
+            if seek_past_data {
                 reader2
                     .as_mut()
-                    .seek(SeekFrom::Start(test_data.len() as u64)),
+                    .seek(SeekFrom::Start(
+                        test_data.len() as u64
+                            + Chunk::LocalHeader { entry_index: 0 }
+                                .size(reader1.entries.as_slice()),
+                    ))
+                    .await
+                    .unwrap();
+            } else {
+                reader2
+                    .as_mut()
+                    .seek(SeekFrom::Start(test_data.len() as u64))
+                    .await
+                    .unwrap();
+            }
+
+            let zip_after_seek = read_to_vec(reader2.as_mut(), 8192).await.unwrap();
+
+
+            assert!(
+                zip_after_seek.as_slice() == &whole_zip[whole_zip.len() - zip_after_seek.len()..]
             )
-            .unwrap();
         }
 
-        let zip_after_seek = block_on(read_to_vec(reader2.as_mut(), 8192)).unwrap();
+        #[proptest(async = "tokio")]
+        async fn cached_crc_seek_within(test_data: Vec<u8>) {
+            test_internal::<LazyReader>(test_data.as_slice(), true, false).await
+        }
 
-        assert!(zip_after_seek.as_slice() == &whole_zip[whole_zip.len() - zip_after_seek.len()..])
-    }
+        #[proptest(async = "tokio")]
+        async fn cached_crc_seek_past(test_data: Vec<u8>) {
+            test_internal::<LazyReader>(test_data.as_slice(), true, true).await
+        }
 
-    /// Gray box test that verifies behavior of CRC recalculation.
-    /// Either seeks within file data (possibility to recalculate CRC when
-    /// producing remaining data), or after the file data (has to be recalculated separately).
-    /// Either pre-fills the CRC from ground truth run or not.
-    /// In all cases compares the remainder of the seek with ground truth
-    /// generated without seeking and without pre-filled CRC.
-    ///
-    /// Since this is a gray box test, it is potentially fragile wrt changes
-    /// to the `Chunk` design of the reader.
-    #[test_case(false, false, false; "No cached CRC, seeking within data")]
-    #[test_case(false, true, false; "No cached CRC, seeking past the data")]
-    #[test_case(true, false, false; "Cached CRC, seeking within data")]
-    #[test_case(true, true, false; "Cached CRC, seeking past the data")]
-    #[test_case(false, false, true; "No cached CRC, seeking within data, lazy reader")]
-    #[test_case(false, true, true; "No cached CRC, seeking past the data, lazy reader")]
-    #[test_case(true, false, true; "Cached CRC, seeking within data, lazy reader")]
-    #[test_case(true, true, true; "Cached CRC, seeking past the data, lazy reader")]
-    fn crc_recalculation_with_seek(pre_fill_crc: bool, seek_past_data: bool, lazy_reader: bool) {
-        let test_data: Vec<u8> = (0..(8192 + 1)).map(|v| (v & 0xff) as u8).collect();
-        if !lazy_reader {
-            crc_recalculation_with_seek_internal::<&[u8]>(
-                test_data.as_slice(),
-                pre_fill_crc,
-                seek_past_data,
-            )
-        } else {
-            crc_recalculation_with_seek_internal::<LazyReader>(
-                test_data.as_slice(),
-                pre_fill_crc,
-                seek_past_data,
-            )
+        #[proptest(async = "tokio")]
+        async fn no_cached_crc_seek_within(test_data: Vec<u8>) {
+            test_internal::<LazyReader>(test_data.as_slice(), false, false).await
+        }
+
+        #[proptest(async = "tokio")]
+        async fn no_cached_crc_seek_past(test_data: Vec<u8>) {
+            test_internal::<LazyReader>(test_data.as_slice(), false, true).await
         }
     }
 }

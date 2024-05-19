@@ -132,7 +132,6 @@ mod test {
     use crate::test_util::content_strategy;
     use assert2::assert;
     use assert_matches::assert_matches;
-    use tokio_test::block_on;
 
     use std::collections::HashMap;
 
@@ -149,8 +148,8 @@ mod test {
 
     /// Tests an internal property of the builder -- that the sizes generated
     /// during building actually match the chunk size.
-    #[proptest]
-    fn local_size_matches_chunks(
+    #[proptest(async = "tokio")]
+    async fn local_size_matches_chunks(
         #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
     ) {
         use crate::reader::Chunk;
@@ -161,16 +160,18 @@ mod test {
             builder.add_entry(name.clone(), value.as_ref()).unwrap();
         });
 
-        let local_sizes: HashMap<String, u64> = builder
-            .entries
-            .iter()
-            .map(|(k, v)| {
-                let size = block_on(v.data.size()).unwrap();
-                (k.clone(), v.get_local_size(k, size))
-            })
-            .collect();
+        let local_sizes = {
+            let mut local_sizes = HashMap::with_capacity(builder.entries.len());
 
-        let zippity = block_on(builder.build()).unwrap();
+            for (k, v) in builder.entries.iter() {
+                let size = v.data.size().await.unwrap();
+                local_sizes.insert(k.clone(), v.get_local_size(k, size));
+            }
+
+            local_sizes
+        };
+
+        let zippity = builder.build().await.unwrap();
 
         let entries = zippity.get_entries();
 

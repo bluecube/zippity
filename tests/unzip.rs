@@ -3,7 +3,6 @@ use std::{collections::HashMap, pin::pin};
 use proptest::strategy::Strategy;
 use test_strategy::proptest;
 use tokio::io::AsyncReadExt;
-use tokio_test::block_on;
 use zip::ZipArchive;
 use zippity::Builder;
 
@@ -16,13 +15,13 @@ pub fn content_strategy() -> impl Strategy<Value = HashMap<String, Vec<u8>>> {
     )
 }
 
-#[test]
-fn empty_archive() {
-    let mut zippity = pin!(block_on(Builder::<()>::new().build()).unwrap());
+#[tokio::test]
+async fn empty_archive() {
+    let mut zippity = pin!(Builder::<()>::new().build().await.unwrap());
     let size = zippity.size();
 
     let mut buf = Vec::new();
-    block_on(zippity.read_to_end(&mut buf)).unwrap();
+    zippity.read_to_end(&mut buf).await.unwrap();
 
     assert!(size == (buf.len() as u64));
 
@@ -30,15 +29,15 @@ fn empty_archive() {
     assert!(unpacked.is_empty());
 }
 
-#[test]
-fn empty_entry_name() {
+#[tokio::test]
+async fn empty_entry_name() {
     let mut builder: Builder<()> = Builder::new();
 
     builder.add_entry(String::new(), ()).unwrap();
 
-    let mut zippity = pin!(block_on(builder.build()).unwrap());
+    let mut zippity = pin!(builder.build().await.unwrap());
     let mut buf = Vec::new();
-    block_on(zippity.read_to_end(&mut buf)).unwrap();
+    zippity.read_to_end(&mut buf).await.unwrap();
 
     let mut unpacked = ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip");
     assert!(unpacked.len() == 1);
@@ -52,19 +51,19 @@ fn empty_entry_name() {
     assert!(file_content.is_empty());
 }
 
-#[test]
-fn archive_with_single_file() {
+#[tokio::test]
+async fn archive_with_single_file() {
     let mut builder: Builder<&[u8]> = Builder::new();
 
     builder
         .add_entry("Foo".to_owned(), b"bar!".as_slice())
         .unwrap();
 
-    let mut zippity = pin!(block_on(builder.build()).unwrap());
+    let mut zippity = pin!(builder.build().await.unwrap());
     let size = zippity.size();
 
     let mut buf = Vec::new();
-    block_on(zippity.read_to_end(&mut buf)).unwrap();
+    zippity.read_to_end(&mut buf).await.unwrap();
 
     assert!(size == (buf.len() as u64));
 
@@ -80,17 +79,17 @@ fn archive_with_single_file() {
     assert!(file_content == b"bar!");
 }
 
-#[test]
-fn archive_with_single_empty_file() {
+#[tokio::test]
+async fn archive_with_single_empty_file() {
     let mut builder: Builder<&[u8]> = Builder::new();
 
     builder.add_entry("0".to_owned(), b"".as_slice()).unwrap();
 
-    let mut zippity = pin!(block_on(builder.build()).unwrap());
+    let mut zippity = pin!(builder.build().await.unwrap());
     let size = zippity.size();
 
     let mut buf = Vec::new();
-    block_on(zippity.read_to_end(&mut buf)).unwrap();
+    zippity.read_to_end(&mut buf).await.unwrap();
 
     assert!(size == (buf.len() as u64));
 
@@ -106,19 +105,19 @@ fn archive_with_single_empty_file() {
     assert!(file_content == b"");
 }
 
-#[proptest]
-fn any_archive(#[strategy(content_strategy())] content: HashMap<String, Vec<u8>>) {
+#[proptest(async = "tokio")]
+async fn any_archive(#[strategy(content_strategy())] content: HashMap<String, Vec<u8>>) {
     let mut builder: Builder<&[u8]> = Builder::new();
 
     content.iter().for_each(|(name, value)| {
         builder.add_entry(name.clone(), value.as_ref()).unwrap();
     });
 
-    let mut zippity = pin!(block_on(builder.build()).unwrap());
+    let mut zippity = pin!(builder.build().await.unwrap());
     let size = zippity.size();
 
     let mut buf = Vec::new();
-    block_on(zippity.read_to_end(&mut buf)).unwrap();
+    zippity.read_to_end(&mut buf).await.unwrap();
 
     assert!(size == (buf.len() as u64));
 
