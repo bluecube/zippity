@@ -1541,7 +1541,6 @@ mod test {
 
             let zip_after_seek = read_to_vec(reader2.as_mut(), 8192).await.unwrap();
 
-
             assert!(
                 zip_after_seek.as_slice() == &whole_zip[whole_zip.len() - zip_after_seek.len()..]
             )
