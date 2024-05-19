@@ -8,6 +8,9 @@ mod error;
 mod reader;
 mod structs;
 
+#[cfg(feature = "tokio-file")]
+mod file_entry;
+
 #[cfg(test)]
 mod test_util;
 

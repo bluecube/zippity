@@ -5,6 +5,9 @@ edition = "2021"
 description = "Library for asynchronously creating a ZIP file on the fly."
 repository = "https://github.com/bluecube/zippity"
 
+[features]
+default = ["tokio-file"]
+tokio-file = ["tokio/rt"]
 
 [dependencies]
 assert2 = "0.3.11"
@@ -21,3 +24,4 @@ test-strategy = "0.3.1"
 zip = "0.6.6"
 tokio = { version = "1.32.0", features = ["rt-multi-thread", "io-util", "macros"] }
 tokio-test = "0.4.3"
+tempfile = "3.10.1"

@@ -46,5 +46,10 @@ zippity.seek(SeekFrom::End(-10)).await.unwrap();
 copy(&mut zippity, &mut sink()).await.unwrap();
 
 })
-
 ```
+
+# Crate features
+
+| Name | Description | Default |
+| ---- | ----------- | ------- |
+| `tokio-file` | Adds support for `PathBuf` being used as a entry data through Tokio file. | yes |
