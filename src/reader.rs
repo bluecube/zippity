@@ -610,6 +610,22 @@ impl ReadState {
     ) -> Poll<std::io::Result<()>> {
         let initial_remaining = output.remaining();
 
+        macro_rules! zippity_ready {
+            ($expression:expr) => {
+                match $expression {
+                    Poll::Ready(Ok(x)) => x,
+                    Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                    Poll::Pending => {
+                        if output.remaining() == initial_remaining {
+                            return Poll::Pending;
+                        } else {
+                            return Poll::Ready(Ok(()));
+                        }
+                    }
+                }
+            };
+        }
+
         while output.remaining() > 0 {
             if !self.staging_buffer.is_empty() {
                 self.read_from_staging(output);
@@ -640,31 +656,30 @@ impl ReadState {
                         // TODO: Make sure that there is nothing in the staging buffer as well?
                         break;
                     }
-                    let read_result = self.read_file_data(
+                    zippity_ready!(self.read_file_data(
                         &mut entries[entry_index],
                         pinned.as_mut(),
                         ctx,
                         output,
-                    );
-                    ready!(read_result)?
+                    ))
                 }
                 Chunk::DataDescriptor { entry_index } => {
                     let entry_index = *entry_index;
-                    ready!(self.read_data_descriptor(
+                    zippity_ready!(self.read_data_descriptor(
                         &mut entries[entry_index],
                         pinned.as_mut(),
                         ctx,
                         output
-                    ))?
+                    ))
                 }
                 Chunk::CDFileHeader { entry_index } => {
                     let entry_index = *entry_index;
-                    ready!(self.read_cd_file_header(
+                    zippity_ready!(self.read_cd_file_header(
                         &mut entries[entry_index],
                         pinned.as_mut(),
                         ctx,
                         output
-                    ))?
+                    ))
                 }
                 Chunk::Eocd => self.read_eocd(sizes, entries, output),
                 Chunk::Finished => unreachable!(),
@@ -1215,6 +1230,33 @@ mod test {
         let actual_size = block_on(measure_size(zippity)).unwrap();
 
         assert!(actual_size == expected_size);
+    }
+
+    /// Tests that passing a LazyReader (that delays each async operation) ends up with the same
+    /// archive as when using regular slice based input.
+    #[proptest]
+    fn lazy_reader_equal_result(
+        #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
+        #[strategy(read_size_strategy())] read_size: usize,
+    ) {
+        let mut builder_slice = Builder::<&[u8]>::new();
+        let mut builder_lazy = Builder::<LazyReader>::new();
+
+        content.iter().for_each(|(name, value)| {
+            builder_slice
+                .add_entry(name.clone(), value.as_ref())
+                .unwrap();
+            builder_lazy
+                .add_entry(name.clone(), value.as_ref())
+                .unwrap();
+        });
+
+        let zippity_slice = pin!(block_on(builder_slice.build()).unwrap());
+        let output_slice = block_on(read_to_vec(zippity_slice, read_size)).unwrap();
+        let zippity_lazy = pin!(block_on(builder_lazy.build()).unwrap());
+        let output_lazy = block_on(read_to_vec(zippity_lazy, read_size)).unwrap();
+
+        assert!(output_slice == output_lazy);
     }
 
     /// Prepare a reader with data from a hash map and a vector of the zip
