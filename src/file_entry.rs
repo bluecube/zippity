@@ -1,18 +1,7 @@
-use std::{
-    future::Future,
-    io::Result,
-    path::PathBuf,
-    pin::Pin,
-    task::{ready, Context, Poll},
-};
-
-use pin_project::pin_project;
-use tokio::{
-    fs::File,
-    task::{spawn_blocking, JoinHandle},
-};
-
 use crate::entry_data::EntryData;
+use futures_util::future::TryFutureExt;
+use std::{future::Future, io::Result, path::PathBuf, pin::Pin};
+use tokio::fs::{metadata, File};
 
 pub struct TokioFileEntry(PathBuf);
 
@@ -30,46 +19,20 @@ impl From<PathBuf> for TokioFileEntry {
 }
 
 impl EntryData for TokioFileEntry {
-    // TODO: Here we're basically reimplementing File::open and metadata() from Tokio,
-    // because we can't name its return type. Once `impl Trait` in associated types
-    // becomes stable, we should convert to directly calling those.
+    // TODO: The boxed futures are ugly as ****.
+    // Once `impl Trait` in associated types becomes stable,
+    // we should convert to directly using those.
 
-    type SizeFuture = FileSizeFuture;
+    type SizeFuture = Pin<Box<dyn Future<Output = Result<u64>>>>;
     type Reader = File;
-    type ReaderFuture = FileReaderFuture;
+    type ReaderFuture = Pin<Box<dyn Future<Output = Result<File>>>>;
 
-    fn size(&self) -> FileSizeFuture {
-        let path = self.0.clone();
-        FileSizeFuture(spawn_blocking(move || Ok(std::fs::metadata(path)?.len())))
+    fn size(&self) -> Self::SizeFuture {
+        Box::pin(metadata(self.0.clone()).map_ok(|m| m.len()))
     }
 
-    fn get_reader(&self) -> FileReaderFuture {
-        let path = self.0.clone();
-        FileReaderFuture(spawn_blocking(move || std::fs::File::open(path)))
-    }
-}
-
-#[pin_project]
-pub struct FileSizeFuture(#[pin] JoinHandle<Result<u64>>);
-
-impl Future for FileSizeFuture {
-    type Output = Result<u64>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let size = ready!(self.project().0.poll(cx)).map_err(|e| std::io::Error::other(e))??;
-        Poll::Ready(Ok(size))
-    }
-}
-
-#[pin_project]
-pub struct FileReaderFuture(#[pin] JoinHandle<Result<std::fs::File>>);
-
-impl Future for FileReaderFuture {
-    type Output = Result<File>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let std = ready!(self.project().0.poll(cx)).map_err(|e| std::io::Error::other(e))??;
-        Poll::Ready(Ok(File::from_std(std)))
+    fn get_reader(&self) -> Self::ReaderFuture {
+        Box::pin(File::open(self.0.clone()))
     }
 }
 
