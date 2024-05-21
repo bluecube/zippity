@@ -14,28 +14,22 @@ use tokio::{
 
 use crate::entry_data::EntryData;
 
-pub struct FileEntry {
-    path: PathBuf,
-    size: Option<u64>,
-}
+pub struct TokioFileEntry(PathBuf);
 
-impl FileEntry {
+impl TokioFileEntry {
     /// Construct a new file entry.
-    /// File will be later queried for metadata to get its size.
-    pub fn new(path: PathBuf) -> FileEntry {
-        FileEntry { path, size: None }
-    }
-
-    /// Construct a new file entry, giving its metadata in advance.
-    pub fn with_size(path: PathBuf, size: u64) -> FileEntry {
-        FileEntry {
-            path,
-            size: Some(size),
-        }
+    pub fn new(path: PathBuf) -> TokioFileEntry {
+        TokioFileEntry(path)
     }
 }
 
-impl EntryData for FileEntry {
+impl From<PathBuf> for TokioFileEntry {
+    fn from(path: PathBuf) -> Self {
+        TokioFileEntry::new(path)
+    }
+}
+
+impl EntryData for TokioFileEntry {
     // TODO: Here we're basically reimplementing File::open and metadata() from Tokio,
     // because we can't name its return type. Once `impl Trait` in associated types
     // becomes stable, we should convert to directly calling those.
@@ -45,38 +39,24 @@ impl EntryData for FileEntry {
     type ReaderFuture = FileReaderFuture;
 
     fn size(&self) -> FileSizeFuture {
-        if let Some(size) = self.size {
-            FileSizeFuture::KnowInAdvance(size)
-        } else {
-            let path = self.path.clone();
-            FileSizeFuture::WaitingForMetadata(spawn_blocking(move || {
-                Ok(std::fs::metadata(path)?.len())
-            }))
-        }
+        let path = self.0.clone();
+        FileSizeFuture(spawn_blocking(move || Ok(std::fs::metadata(path)?.len())))
     }
 
     fn get_reader(&self) -> FileReaderFuture {
-        let path = self.path.clone();
+        let path = self.0.clone();
         FileReaderFuture(spawn_blocking(move || std::fs::File::open(path)))
     }
 }
 
-#[pin_project(project = FileSizeFutureProj)]
-pub enum FileSizeFuture {
-    KnowInAdvance(u64),
-    WaitingForMetadata(#[pin] JoinHandle<Result<u64>>),
-}
+#[pin_project]
+pub struct FileSizeFuture(#[pin] JoinHandle<Result<u64>>);
 
 impl Future for FileSizeFuture {
     type Output = Result<u64>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let size = match self.project() {
-            FileSizeFutureProj::KnowInAdvance(size) => *size,
-            FileSizeFutureProj::WaitingForMetadata(handle) => {
-                ready!(handle.poll(cx)).map_err(|e| std::io::Error::other(e))??
-            }
-        };
+        let size = ready!(self.project().0.poll(cx)).map_err(|e| std::io::Error::other(e))??;
         Poll::Ready(Ok(size))
     }
 }
@@ -104,19 +84,12 @@ mod test {
     use test_strategy::proptest;
 
     #[proptest(async = "tokio")]
-    async fn with_size_returns_given_size(size: u64) {
-        let entry = FileEntry::with_size("nonexistent path".into(), size);
-
-        assert!(entry.size().await.unwrap() == size);
-    }
-
-    #[proptest(async = "tokio")]
     async fn can_determine_file_size(content: Vec<u8>) {
         let (mut tempfile, tempfile_name) = tempfile::NamedTempFile::new().unwrap().into_parts();
         tempfile.write_all(content.as_slice()).unwrap();
         drop(tempfile);
 
-        let entry = FileEntry::new(tempfile_name.to_path_buf());
+        let entry = TokioFileEntry::new(tempfile_name.to_path_buf());
 
         assert!(entry.size().await.unwrap() == content.len() as u64);
     }
@@ -127,7 +100,7 @@ mod test {
         tempfile.write_all(content.as_slice()).unwrap();
         drop(tempfile);
 
-        let entry = FileEntry::new(tempfile_name.to_path_buf());
+        let entry = TokioFileEntry::new(tempfile_name.to_path_buf());
 
         let reader = pin!(entry.get_reader().await.unwrap());
 
