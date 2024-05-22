@@ -80,6 +80,12 @@ impl<D: EntryData> ReaderEntry<D> {
             return Poll::Ready(Ok(crc));
         }
 
+        if self.size == 0 {
+            let crc = crc32fast::hash(&[]);
+            self.crc32 = Some(crc);
+            return Poll::Ready(Ok(crc));
+        }
+
         let mut file_reader = ready!(self.get_reader(pinned.as_mut(), ctx))?;
 
         let mut read_buffer = get_read_buf(read_buffer);
@@ -1565,5 +1571,39 @@ mod test {
         async fn no_cached_crc_seek_past(test_data: Vec<u8>) {
             test_internal::<LazyReader>(test_data.as_slice(), false, true).await
         }
+    }
+
+    #[proptest(async = "tokio")]
+    async fn empty_data_dont_open_reader(#[strategy(read_size_strategy())] read_size: usize) {
+        struct EmptyUnsupportedReader();
+        impl EntryData for EmptyUnsupportedReader {
+            type SizeFuture = std::future::Ready<Result<u64>>;
+            type Reader = std::io::Cursor<&'static [u8]>;
+            type ReaderFuture = std::future::Ready<Result<Self::Reader>>;
+
+            fn size(&self) -> Self::SizeFuture {
+                std::future::ready(Ok(0))
+            }
+
+            fn get_reader(&self) -> Self::ReaderFuture {
+                unimplemented!("This test struct doesn't support getting futures")
+            }
+        }
+
+        let mut builder = Builder::<EmptyUnsupportedReader>::new();
+        builder
+            .add_entry("abc".into(), EmptyUnsupportedReader())
+            .unwrap();
+        builder
+            .add_entry("def".into(), EmptyUnsupportedReader())
+            .unwrap();
+        builder
+            .add_entry("ghi".into(), EmptyUnsupportedReader())
+            .unwrap();
+
+        let zippity = pin!(builder.build().await.unwrap());
+
+        read_to_vec(zippity, read_size).await.unwrap();
+        // No need to check anything else, get_reader is already unimplemented
     }
 }
