@@ -1,0 +1,65 @@
+#![cfg(feature = "tokio-file")]
+
+use assert2::assert;
+use proptest::strategy::Strategy;
+use std::io::Write;
+use std::pin::pin;
+use std::{collections::HashMap, io::SeekFrom};
+use tempfile::TempDir;
+use test_strategy::proptest;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+use zippity::{Builder, TokioFileEntry};
+
+// This function is duplicated from private zippity::test_util::content_strategy ... oh well...
+pub fn content_strategy() -> impl Strategy<Value = HashMap<String, Vec<u8>>> {
+    proptest::collection::hash_map(
+        ".*",
+        proptest::collection::vec(proptest::bits::u8::ANY, 0..100),
+        0..100,
+    )
+}
+
+#[proptest(async = "tokio")]
+async fn read_slice_of_tokio_file_based_zip(
+    #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
+    #[strategy(0f64..=1f64)] seek_pos_fraction: f64,
+) {
+    let tempdir = TempDir::new().unwrap();
+    let mut builder_slices: Builder<&[u8]> = Builder::new();
+    let mut builder_files: Builder<TokioFileEntry> = Builder::new();
+
+    for (i, (name, value)) in content.iter().enumerate() {
+        let path = tempdir.path().join(format!("{}", i));
+
+        std::fs::File::create(path.clone())
+            .unwrap()
+            .write_all(value.as_slice())
+            .unwrap();
+
+        builder_slices
+            .add_entry(name.clone(), value.as_slice())
+            .unwrap();
+        builder_files.add_entry(name.clone(), path).unwrap();
+    }
+
+    let mut zippity_slices = pin!(builder_slices.build().await.unwrap());
+    let mut zippity_files = pin!(builder_files.build().await.unwrap());
+
+    assert!(zippity_files.size() == zippity_slices.size());
+
+    let seek_pos = (seek_pos_fraction * zippity_slices.size() as f64).floor() as u64;
+
+    zippity_slices
+        .seek(SeekFrom::Start(seek_pos))
+        .await
+        .unwrap();
+    zippity_files.seek(SeekFrom::Start(seek_pos)).await.unwrap();
+
+    let mut vec_slices = Vec::new();
+    zippity_slices.read_to_end(&mut vec_slices).await.unwrap();
+    let mut vec_files = Vec::new();
+    zippity_files.read_to_end(&mut vec_files).await.unwrap();
+
+    assert!(vec_files == vec_slices);
+}
