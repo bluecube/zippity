@@ -10,7 +10,7 @@ Library for asynchronously creating a ZIP file on the fly.
 - [x] File size is known in advance
 - [x] Output is driven from outside (implements `tokio::io::AsyncRead`)
 - [x] Allows seeking in the file (implements `tokio::io::AsyncSeek`)
-- [ ] Supports files on the filesystem as entries.
+- [X] Supports files on the filesystem as entries.
 - [ ] Supports integration with Actix Web (implements `actix_web::Responder`) behind feature flag
 
 ## Non-features
@@ -52,4 +52,4 @@ copy(&mut zippity, &mut sink()).await.unwrap();
 
 | Name | Description | Default |
 | ---- | ----------- | ------- |
-| `tokio-file` | Adds support for `PathBuf` being used as a entry data through Tokio file. | yes |
+| `tokio-file` | Adds support for `TokioiFileEntry` being used as a entry data through Tokio file. | yes |
