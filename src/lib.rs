@@ -9,7 +9,7 @@ mod reader;
 mod structs;
 
 #[cfg(feature = "tokio-file")]
-mod file_entry;
+mod tokio_file;
 
 #[cfg(test)]
 mod test_util;
