@@ -393,7 +393,7 @@ impl ReadState {
         true
     }
 
-    fn read_file_data<D: EntryData>(
+    fn read_entry_data<D: EntryData>(
         &mut self,
         entry: &mut ReaderEntry<D>,
         mut pinned: Pin<&mut ReaderPinned<D>>,
@@ -656,7 +656,7 @@ impl ReadState {
                         // TODO: Make sure that there is nothing in the staging buffer as well?
                         break;
                     }
-                    zippity_ready!(self.read_file_data(
+                    zippity_ready!(self.read_entry_data(
                         &mut entries[entry_index],
                         pinned.as_mut(),
                         ctx,
