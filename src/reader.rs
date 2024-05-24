@@ -455,7 +455,17 @@ impl ReadState {
             // Nothing was output => we read everything in the file already
 
             if file_reader.is_crc_valid() {
-                entry.crc32 = Some(file_reader.get_crc32());
+                let actual_crc = file_reader.get_crc32();
+                if let Some(expected_crc) = entry.crc32 {
+                    if expected_crc != actual_crc {
+                        return Poll::Ready(Err(Error::other(ZippityError::Crc32Mismatch {
+                            entry_name: entry.name.clone(),
+                            expected_crc,
+                            actual_crc,
+                        })));
+                    }
+                }
+                entry.crc32 = Some(actual_crc);
             }
 
             pinned.set(ReaderPinned::Nothing);
@@ -1605,5 +1615,18 @@ mod test {
 
         read_to_vec(zippity, read_size).await.unwrap();
         // No need to check anything else, get_reader is already unimplemented
+    }
+
+    #[tokio::test]
+    async fn bad_crc() {
+        let mut builder = Builder::<&[u8]>::new();
+        builder
+            .add_entry("x".into(), b"x".as_slice())
+            .unwrap()
+            .crc32(0); // Passing in a wrong CRC
+
+        let zippity = pin!(builder.build().await.unwrap());
+        let e = read_to_vec(zippity, 8192).await.unwrap_err();
+        dbg!(e);
     }
 }
