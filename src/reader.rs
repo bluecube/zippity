@@ -856,7 +856,7 @@ fn get_read_buf(vec: &mut Vec<u8>) -> ReadBuf {
 mod test {
     use super::*;
     use crate::test_util::{
-        content_strategy, measure_size, read_size_strategy, read_to_vec, LazyReader, ZerosReader,
+        content_strategy, funky_entry_data, measure_size, read_size_strategy, read_to_vec,
     };
     use crate::Builder;
     use assert2::assert;
@@ -1229,13 +1229,16 @@ mod test {
     #[tokio::test]
     #[ignore = "this test is too slow"]
     async fn zip64_works() {
-        let mut builder = Builder::<ZerosReader>::new();
+        let mut builder = Builder::<funky_entry_data::Zeros>::new();
         builder
-            .add_entry("Big file".to_owned(), ZerosReader::new(0x100000000))
+            .add_entry(
+                "Big file".to_owned(),
+                funky_entry_data::Zeros::new(0x100000000),
+            )
             .unwrap();
         for i in 0..0xffff {
             builder
-                .add_entry(format!("Empty file {}", i), ZerosReader::new(0))
+                .add_entry(format!("Empty file {}", i), funky_entry_data::Zeros::new(0))
                 .unwrap();
         }
         let zippity = pin!(builder.build().await.unwrap());
@@ -1254,7 +1257,7 @@ mod test {
         #[strategy(read_size_strategy())] read_size: usize,
     ) {
         let mut builder_slice = Builder::<&[u8]>::new();
-        let mut builder_lazy = Builder::<LazyReader>::new();
+        let mut builder_lazy = Builder::<funky_entry_data::LazyReader>::new();
 
         content.iter().for_each(|(name, value)| {
             builder_slice
@@ -1467,24 +1470,10 @@ mod test {
 
     #[tokio::test]
     async fn bad_size_entry_data_errors_out() {
-        /// Struct that reports data size 100, but actually its 1
-        struct BadSize();
-        impl EntryData for BadSize {
-            type SizeFuture = std::future::Ready<Result<u64>>;
-            type Reader = std::io::Cursor<&'static [u8]>;
-            type ReaderFuture = std::future::Ready<Result<Self::Reader>>;
-
-            fn size(&self) -> Self::SizeFuture {
-                std::future::ready(Ok(100))
-            }
-
-            fn get_reader(&self) -> Self::ReaderFuture {
-                std::future::ready(Ok(std::io::Cursor::new(&[5])))
-            }
-        }
-
-        let mut builder: Builder<BadSize> = Builder::new();
-        builder.add_entry("xxx".into(), BadSize()).unwrap();
+        let mut builder: Builder<funky_entry_data::BadSize> = Builder::new();
+        builder
+            .add_entry("xxx".into(), funky_entry_data::BadSize())
+            .unwrap();
 
         let zippity = pin!(builder.build().await.unwrap());
         let e = read_to_vec(zippity, 1024).await.unwrap_err();
@@ -1508,12 +1497,8 @@ mod test {
         ///
         /// Since this is a gray box test, it is potentially fragile wrt changes
         /// to the `Chunk` design of the reader.
-        async fn test_internal<'a, T: From<&'a [u8]> + EntryData>(
-            test_data: &'a [u8],
-            pre_fill_crc: bool,
-            seek_past_data: bool,
-        ) {
-            let mut builder1 = Builder::<T>::new();
+        async fn test_internal(test_data: &[u8], pre_fill_crc: bool, seek_past_data: bool) {
+            let mut builder1 = Builder::<funky_entry_data::LazyReader>::new();
             builder1.add_entry("X".to_owned(), test_data).unwrap();
 
             let mut reader1 = pin!(builder1.build().await.unwrap());
@@ -1530,7 +1515,7 @@ mod test {
                 pair.1
             };
 
-            let mut builder2 = Builder::<T>::new();
+            let mut builder2 = Builder::<funky_entry_data::LazyReader>::new();
             let entry = builder2.add_entry("X".to_owned(), test_data).unwrap();
             if pre_fill_crc {
                 entry.crc32(entry_crc);
@@ -1564,51 +1549,36 @@ mod test {
 
         #[proptest(async = "tokio")]
         async fn cached_crc_seek_within(test_data: Vec<u8>) {
-            test_internal::<LazyReader>(test_data.as_slice(), true, false).await
+            test_internal(test_data.as_slice(), true, false).await
         }
 
         #[proptest(async = "tokio")]
         async fn cached_crc_seek_past(test_data: Vec<u8>) {
-            test_internal::<LazyReader>(test_data.as_slice(), true, true).await
+            test_internal(test_data.as_slice(), true, true).await
         }
 
         #[proptest(async = "tokio")]
         async fn no_cached_crc_seek_within(test_data: Vec<u8>) {
-            test_internal::<LazyReader>(test_data.as_slice(), false, false).await
+            test_internal(test_data.as_slice(), false, false).await
         }
 
         #[proptest(async = "tokio")]
         async fn no_cached_crc_seek_past(test_data: Vec<u8>) {
-            test_internal::<LazyReader>(test_data.as_slice(), false, true).await
+            test_internal(test_data.as_slice(), false, true).await
         }
     }
 
     #[proptest(async = "tokio")]
     async fn empty_data_dont_open_reader(#[strategy(read_size_strategy())] read_size: usize) {
-        struct EmptyUnsupportedReader();
-        impl EntryData for EmptyUnsupportedReader {
-            type SizeFuture = std::future::Ready<Result<u64>>;
-            type Reader = std::io::Cursor<&'static [u8]>;
-            type ReaderFuture = std::future::Ready<Result<Self::Reader>>;
-
-            fn size(&self) -> Self::SizeFuture {
-                std::future::ready(Ok(0))
-            }
-
-            fn get_reader(&self) -> Self::ReaderFuture {
-                unimplemented!("This test struct doesn't support getting futures")
-            }
-        }
-
-        let mut builder = Builder::<EmptyUnsupportedReader>::new();
+        let mut builder = Builder::<funky_entry_data::EmptyUnsupportedReader>::new();
         builder
-            .add_entry("abc".into(), EmptyUnsupportedReader())
+            .add_entry("abc".into(), funky_entry_data::EmptyUnsupportedReader())
             .unwrap();
         builder
-            .add_entry("def".into(), EmptyUnsupportedReader())
+            .add_entry("def".into(), funky_entry_data::EmptyUnsupportedReader())
             .unwrap();
         builder
-            .add_entry("ghi".into(), EmptyUnsupportedReader())
+            .add_entry("ghi".into(), funky_entry_data::EmptyUnsupportedReader())
             .unwrap();
 
         let zippity = pin!(builder.build().await.unwrap());
