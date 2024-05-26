@@ -1472,7 +1472,13 @@ mod test {
     async fn bad_size_entry_data_errors_out() {
         let mut builder: Builder<funky_entry_data::BadSize> = Builder::new();
         builder
-            .add_entry("xxx".into(), funky_entry_data::BadSize())
+            .add_entry(
+                "xxx".into(),
+                funky_entry_data::BadSize {
+                    reported_size: 100,
+                    actual_size: 10,
+                },
+            )
             .unwrap();
 
         let zippity = pin!(builder.build().await.unwrap());
@@ -1482,6 +1488,55 @@ mod test {
         let message = format!("{}", e.into_inner().unwrap());
 
         assert!(message.contains("xxx"));
+    }
+
+    mod bad_size_seek {
+        use super::*;
+
+        async fn test_internal(reported_size: u64, actual_size: u64, seek_pos_in_entry: u64) {
+            let mut builder: Builder<funky_entry_data::BadSize> = Builder::new();
+            builder
+                .add_entry(
+                    "xxx".into(),
+                    funky_entry_data::BadSize {
+                        reported_size,
+                        actual_size,
+                    },
+                )
+                .unwrap();
+
+            let mut zippity = pin!(builder.build().await.unwrap());
+            zippity
+                .seek(SeekFrom::Start(
+                    seek_pos_in_entry
+                        + Chunk::LocalHeader { entry_index: 0 }.size(zippity.entries.as_slice()),
+                ))
+                .await
+                .unwrap();
+            let e = read_to_vec(zippity, 1024).await.unwrap_err();
+            dbg!(e);
+        }
+
+        #[tokio::test]
+        async fn reported_too_short_before_reported_size() {
+            test_internal(10, 20, 5).await
+        }
+
+        #[tokio::test]
+        #[should_panic] //TODO: This kind of bad input can't be detected at the moment.
+        async fn reported_too_short_after_reported_size() {
+            test_internal(10, 20, 15).await
+        }
+
+        #[tokio::test]
+        async fn reported_too_long_before_real_size() {
+            test_internal(20, 10, 5).await
+        }
+
+        #[tokio::test]
+        async fn reported_too_long_after_real_size() {
+            test_internal(20, 10, 15).await
+        }
     }
 
     mod crc_recalculation_with_seek {

@@ -258,20 +258,24 @@ pub mod funky_entry_data {
         }
     }
 
-    /// Struct that reports data size 100, but actually its 1
-    pub struct BadSize();
+    /// Struct that reports some data size, but provides different.
+    /// Returned data is all zeros.
+    pub struct BadSize {
+        pub reported_size: u64,
+        pub actual_size: u64,
+    }
 
     impl EntryData for BadSize {
         type SizeFuture = std::future::Ready<Result<u64>>;
-        type Reader = std::io::Cursor<&'static [u8]>;
+        type Reader = Zeros;
         type ReaderFuture = std::future::Ready<Result<Self::Reader>>;
 
         fn size(&self) -> Self::SizeFuture {
-            std::future::ready(Ok(100))
+            std::future::ready(Ok(self.reported_size))
         }
 
         fn get_reader(&self) -> Self::ReaderFuture {
-            std::future::ready(Ok(std::io::Cursor::new(&[5])))
+            std::future::ready(Ok(Zeros::new(self.actual_size)))
         }
     }
 
