@@ -18,7 +18,7 @@ use http_range_header::parse_range_header;
 use tokio::io::AsyncReadExt;
 use tokio_util::io::{/*poll_read_buf,*/ ReaderStream};
 
-impl<D: EntryData<'static> + 'static> Reader<'static, D> {
+impl<D: EntryData + 'static> Reader<D> {
     pub fn into_response(mut self, req: &HttpRequest) -> HttpResponse<BoxBody> {
         let mut res = HttpResponse::Ok();
 
@@ -54,7 +54,7 @@ impl<D: EntryData<'static> + 'static> Reader<'static, D> {
     }
 }
 
-impl<D: EntryData<'static> + 'static> Responder for Reader<'static, D> {
+impl<D: EntryData + 'static> Responder for Reader<D> {
     type Body = BoxBody;
 
     fn respond_to(self, req: &HttpRequest) -> HttpResponse<Self::Body> {
