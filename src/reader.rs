@@ -253,6 +253,29 @@ impl<D: EntryData> Reader<D> {
         }
     }
 
+    /// Creates a reader that contains no data and is always at EOF.
+    /// Tis is not a valid zip file!
+    /// The resulting Reader is useful mostly as a cheap dummy value for replacing an actual reader.
+    pub fn new_empty_file() -> Self {
+        Reader {
+            sizes: Sizes {
+                cd_offset: 0,
+                cd_size: 0,
+                eocd_offset: 0,
+                total_size: 0,
+            },
+            entries: Vec::new(),
+            read_state: ReadState {
+                current_chunk: Chunk::Finished,
+                chunk_processed_size: 0,
+                position: 0,
+                staging_buffer: Vec::new(),
+                to_skip: 0,
+            },
+            pinned: ReaderPinned::Nothing,
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn get_entries(&self) -> &[ReaderEntry<D>] {
         &self.entries
@@ -1653,5 +1676,20 @@ mod test {
         let zippity = pin!(builder.build().await.unwrap());
         let e = read_to_vec(zippity, 8192).await.unwrap_err();
         dbg!(e);
+    }
+
+    #[proptest(async = "tokio")]
+    async fn reading_new_empty(#[strategy(read_size_strategy())] read_size: usize) {
+        let zippity = pin!(Reader::<&[u8]>::new_empty_file());
+        let v = read_to_vec(zippity, read_size).await.unwrap();
+        assert!(v == Vec::<u8>::new());
+    }
+
+    #[proptest(async = "tokio")]
+    async fn reading_new_seeking(#[strategy(read_size_strategy())] read_size: usize) {
+        let mut zippity = pin!(Reader::<&[u8]>::new_empty_file());
+        zippity.as_mut().seek_from_start_pinned(100);
+        let v = read_to_vec(zippity.as_mut(), read_size).await.unwrap();
+        assert!(v == Vec::<u8>::new());
     }
 }
