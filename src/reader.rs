@@ -253,6 +253,29 @@ impl<D: EntryData> Reader<D> {
         }
     }
 
+    /// Creates a reader that contains no data and is always at EOF.
+    /// This is not a valid zip file!
+    /// The resulting Reader is useful mostly as a cheap dummy value for replacing an actual reader.
+    pub fn new_empty_file() -> Self {
+        Reader {
+            sizes: Sizes {
+                cd_offset: 0,
+                cd_size: 0,
+                eocd_offset: 0,
+                total_size: 0,
+            },
+            entries: Vec::new(),
+            read_state: ReadState {
+                current_chunk: Chunk::Finished,
+                chunk_processed_size: 0,
+                position: 0,
+                staging_buffer: Vec::new(),
+                to_skip: 0,
+            },
+            pinned: ReaderPinned::Nothing,
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn get_entries(&self) -> &[ReaderEntry<D>] {
         &self.entries
@@ -1686,5 +1709,21 @@ mod test {
         let cloned_data = read_to_vec(cloned, read_size).await.unwrap();
 
         assert!(cloned_data == original_data);
+
+    /// Test that constructing an empty reader object works and provides no bytes.
+    #[proptest(async = "tokio")]
+    async fn reading_new_empty(#[strategy(read_size_strategy())] read_size: usize) {
+        let zippity = pin!(Reader::<&[u8]>::new_empty_file());
+        let v = read_to_vec(zippity, read_size).await.unwrap();
+        assert!(v == Vec::<u8>::new());
+    }
+
+    /// Test that empty constructed reader can be seeked in and stoll provides no data.
+    #[proptest(async = "tokio")]
+    async fn reading_new_empty_seeking(#[strategy(read_size_strategy())] read_size: usize) {
+        let mut zippity = pin!(Reader::<&[u8]>::new_empty_file());
+        zippity.as_mut().seek_from_start_pinned(100);
+        let v = read_to_vec(zippity.as_mut(), read_size).await.unwrap();
+        assert!(v == Vec::<u8>::new());
     }
 }
