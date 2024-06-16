@@ -18,7 +18,7 @@ use crate::structs::PackedStructZippityExt;
 pub const ZIP64_VERSION_TO_EXTRACT: u8 = 45;
 pub(crate) const READ_SIZE: usize = 8192;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct ReaderEntry<D: EntryData> {
     name: String,
     data: D,
@@ -259,7 +259,7 @@ impl<D: EntryData> Reader<D> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Sizes {
     pub(crate) cd_offset: u64,
     pub(crate) cd_size: u64,
@@ -844,6 +844,24 @@ impl<D: EntryData> AsyncSeek for Reader<D> {
 
     fn poll_complete(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<u64>> {
         Poll::Ready(Ok(self.tell()))
+    }
+}
+
+impl<D: EntryData + std::fmt::Debug> std::fmt::Debug for Reader<D> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("zippity::Reader")
+            .field("sizes", &self.sizes)
+            .field("read_state", &self.read_state)
+            .field("entries", &self.entries)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<D: EntryData + Clone> Clone for Reader<D> {
+    fn clone(&self) -> Self {
+        let mut cloned = Reader::new(self.sizes.clone(), self.entries.clone());
+        cloned.seek_from_start_mut(self.tell());
+        cloned
     }
 }
 
@@ -1653,5 +1671,30 @@ mod test {
         let zippity = pin!(builder.build().await.unwrap());
         let e = read_to_vec(zippity, 8192).await.unwrap_err();
         dbg!(e);
+    }
+
+    /// Test that seeking to a valid location in a zip file using SeekFrom::Start works as expected
+    #[proptest(async = "tokio")]
+    async fn clone(
+        #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
+        #[strategy(read_size_strategy())] read_size: usize,
+        #[strategy(0f64..=1f64)] seek_pos_fraction: f64,
+    ) {
+        let mut builder: Builder<&[u8]> = Builder::new();
+        content.iter().for_each(|(name, value)| {
+            builder.add_entry(name.clone(), value.as_ref()).unwrap();
+        });
+
+        let mut reader = builder.clone().build().await.unwrap();
+        let seek_pos = (seek_pos_fraction * reader.size() as f64).floor() as u64;
+        reader.seek_from_start_mut(seek_pos);
+
+        let cloned = pin!(reader.clone());
+        let reader = pin!(reader);
+
+        let original_data = read_to_vec(reader, read_size).await.unwrap();
+        let cloned_data = read_to_vec(cloned, read_size).await.unwrap();
+
+        assert!(cloned_data == original_data);
     }
 }
