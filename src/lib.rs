@@ -11,6 +11,9 @@ mod structs;
 #[cfg(feature = "tokio-file")]
 mod tokio_file;
 
+#[cfg(feature = "bytes")]
+mod bytes;
+
 #[cfg(test)]
 mod test_util;
 
@@ -21,3 +24,6 @@ pub use reader::Reader;
 
 #[cfg(feature = "tokio-file")]
 pub use tokio_file::TokioFileEntry;
+
+#[cfg(feature = "bytes")]
+pub use bytes::BytesStream;

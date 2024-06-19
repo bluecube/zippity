@@ -54,3 +54,4 @@ copy(&mut zippity, &mut sink()).await.unwrap();
 | Name | Description | Default |
 | ---- | ----------- | ------- |
 | `tokio-file` | Adds support for `TokioFileEntry` being used as a entry data through Tokio file. | yes |
+| `bytes` | Implement `EntryData` for `bytes::Bytes`, and provide method `into_bytes_stream()` for `Reader`. | no |
