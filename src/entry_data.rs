@@ -1,5 +1,7 @@
-use std::future::Future;
-use std::io::Result;
+use std::{
+    future::{Future, Ready},
+    io::{Cursor, Result},
+};
 
 use tokio::io::{AsyncRead, AsyncSeek};
 
@@ -30,15 +32,15 @@ impl EntryData for () {
 }
 
 impl<'a> EntryData for &'a [u8] {
-    type SizeFuture = std::future::Ready<Result<u64>>;
-    type Reader = std::io::Cursor<&'a [u8]>;
-    type ReaderFuture = std::future::Ready<Result<Self::Reader>>;
+    type SizeFuture = Ready<Result<u64>>;
+    type Reader = Cursor<&'a [u8]>;
+    type ReaderFuture = Ready<Result<Self::Reader>>;
 
     fn size(&self) -> Self::SizeFuture {
         std::future::ready(Ok(self.len() as u64))
     }
 
     fn get_reader(&self) -> Self::ReaderFuture {
-        std::future::ready(Ok(std::io::Cursor::new(self)))
+        std::future::ready(Ok(Cursor::new(self)))
     }
 }
