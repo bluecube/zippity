@@ -44,3 +44,17 @@ impl<'a> EntryData for &'a [u8] {
         std::future::ready(Ok(Cursor::new(self)))
     }
 }
+
+// impl<T: AsRef<U>, U: EntryData> EntryData for T {
+//     type SizeFuture = U::SizeFuture;
+//     type Reader = U::Reader;
+//     type ReaderFuture = U::ReaderFuture;
+
+//     fn size(&self) -> Self::SizeFuture {
+//         self.as_ref().size()
+//     }
+
+//     fn get_reader(&self) -> Self::ReaderFuture {
+//         self.as_ref().get_reader()
+//     }
+// }

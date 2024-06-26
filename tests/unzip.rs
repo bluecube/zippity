@@ -1,19 +1,9 @@
 use std::{collections::HashMap, pin::pin};
 
-use proptest::strategy::Strategy;
 use test_strategy::proptest;
 use tokio::io::AsyncReadExt;
 use zip::ZipArchive;
 use zippity::Builder;
-
-// This function is duplicated from private zippity::test_util::content_strategy ... oh well...
-pub fn content_strategy() -> impl Strategy<Value = HashMap<String, Vec<u8>>> {
-    proptest::collection::hash_map(
-        ".*",
-        proptest::collection::vec(proptest::bits::u8::ANY, 0..100),
-        0..100,
-    )
-}
 
 #[tokio::test]
 async fn empty_archive() {
@@ -106,14 +96,9 @@ async fn archive_with_single_empty_file() {
 }
 
 #[proptest(async = "tokio")]
-async fn any_archive(#[strategy(content_strategy())] content: HashMap<String, Vec<u8>>) {
-    let mut builder: Builder<&[u8]> = Builder::new();
-
-    content.iter().for_each(|(name, value)| {
-        builder.add_entry(name.clone(), value.as_ref()).unwrap();
-    });
-
-    let mut zippity = pin!(builder.build().await.unwrap());
+async fn any_archive(reader_and_data: zippity::proptest::ReaderAndData) {
+    let mut zippity = pin!(reader_and_data.reader);
+    let content = reader_and_data.data;
     let size = zippity.size();
 
     let mut buf = Vec::new();
@@ -122,7 +107,7 @@ async fn any_archive(#[strategy(content_strategy())] content: HashMap<String, Ve
     assert!(size == (buf.len() as u64));
 
     let mut unpacked = ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip");
-    assert!(unpacked.len() == content.len());
+    assert!(unpacked.len() == content.0.len());
 
     let mut unpacked_content = HashMap::new();
     for i in 0..unpacked.len() {
@@ -133,7 +118,7 @@ async fn any_archive(#[strategy(content_strategy())] content: HashMap<String, Ve
         use std::io::Read;
         zipfile.read_to_end(&mut file_content).unwrap();
 
-        unpacked_content.insert(name, file_content);
+        unpacked_content.insert(name, file_content.into());
     }
-    assert!(unpacked_content == content);
+    assert!(unpacked_content == content.0);
 }

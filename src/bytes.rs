@@ -86,7 +86,7 @@ impl<D: EntryData> Reader<D> {
 
 #[cfg(test)]
 mod test {
-    use std::{collections::HashMap, pin::pin};
+    use std::pin::pin;
 
     use bytes::Bytes;
     use futures_util::StreamExt;
@@ -94,18 +94,19 @@ mod test {
 
     use crate::{
         builder::Builder,
-        test_util::{content_strategy, read_size_strategy, read_to_vec},
+        proptest::TestEntryData,
+        test_util::{read_size_strategy, read_to_vec},
     };
 
     /// Test that the zip file comes out identical between &[u8] and Bytes
     #[proptest(async = "tokio")]
     async fn bytes_and_u8_slice_give_identical_results(
-        #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
+        content: TestEntryData,
         #[strategy(read_size_strategy())] read_size: usize,
     ) {
         let mut builder_slice: Builder<&[u8]> = Builder::new();
         let mut builder_bytes: Builder<Bytes> = Builder::new();
-        content.iter().for_each(|(name, value)| {
+        content.0.iter().for_each(|(name, value)| {
             builder_slice
                 .add_entry(name.clone(), value.as_ref())
                 .unwrap();
@@ -125,11 +126,11 @@ mod test {
 
     #[proptest(async = "tokio")]
     async fn bytes_stream_provides_correct_data(
-        #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
+        content: TestEntryData,
         #[strategy(read_size_strategy())] read_size: usize,
     ) {
         let mut builder: Builder<Bytes> = Builder::new();
-        content.iter().for_each(|(name, value)| {
+        content.0.iter().for_each(|(name, value)| {
             builder.add_entry(name.clone(), value.clone()).unwrap();
         });
 

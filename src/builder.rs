@@ -128,8 +128,9 @@ impl<D: EntryData> Builder<D> {
 
 #[cfg(test)]
 mod test {
+    use crate::proptest::TestEntryData;
+
     use super::*;
-    use crate::test_util::content_strategy;
     use assert2::assert;
     use assert_matches::assert_matches;
 
@@ -149,14 +150,12 @@ mod test {
     /// Tests an internal property of the builder -- that the sizes generated
     /// during building actually match the chunk size.
     #[proptest(async = "tokio")]
-    async fn local_size_matches_chunks(
-        #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
-    ) {
+    async fn local_size_matches_chunks(content: TestEntryData) {
         use crate::reader::Chunk;
 
         let mut builder: Builder<&[u8]> = Builder::new();
 
-        content.iter().for_each(|(name, value)| {
+        content.0.iter().for_each(|(name, value)| {
             builder.add_entry(name.clone(), value.as_ref()).unwrap();
         });
 

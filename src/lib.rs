@@ -14,6 +14,9 @@ mod tokio_file;
 #[cfg(feature = "bytes")]
 mod bytes;
 
+#[cfg(feature = "proptest")]
+pub mod proptest;
+
 #[cfg(test)]
 mod test_util;
 

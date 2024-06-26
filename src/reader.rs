@@ -873,12 +873,11 @@ fn get_read_buf(vec: &mut Vec<u8>) -> ReadBuf {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::test_util::{
-        content_strategy, funky_entry_data, measure_size, read_size_strategy, read_to_vec,
-    };
+    use crate::proptest::TestEntryData;
+    use crate::test_util::{funky_entry_data, measure_size, read_size_strategy, read_to_vec};
     use crate::Builder;
     use assert2::assert;
-    use std::collections::HashMap;
+    use bytes::Bytes;
     use std::{io::ErrorKind, pin::pin};
     use test_strategy::proptest;
     use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -1271,13 +1270,13 @@ mod test {
     /// archive as when using regular slice based input.
     #[proptest(async = "tokio")]
     async fn lazy_reader_equal_result(
-        #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
+        content: TestEntryData,
         #[strategy(read_size_strategy())] read_size: usize,
     ) {
         let mut builder_slice = Builder::<&[u8]>::new();
         let mut builder_lazy = Builder::<funky_entry_data::LazyReader>::new();
 
-        content.iter().for_each(|(name, value)| {
+        content.0.iter().for_each(|(name, value)| {
             builder_slice
                 .add_entry(name.clone(), value.as_ref())
                 .unwrap();
@@ -1297,13 +1296,10 @@ mod test {
     /// Prepare a reader with data from a hash map and a vector of the zip
     /// read as a whole
     async fn prepare_seek_test_data(
-        content: &HashMap<String, Vec<u8>>,
+        content: TestEntryData,
         read_size: usize,
-    ) -> (Reader<&[u8]>, Vec<u8>) {
-        let mut builder: Builder<&[u8]> = Builder::new();
-        content.iter().for_each(|(name, value)| {
-            builder.add_entry(name.clone(), value.as_ref()).unwrap();
-        });
+    ) -> (Reader<Bytes>, Vec<u8>) {
+        let builder: Builder<Bytes> = content.into();
 
         let zippity_whole = pin!(builder.clone().build().await.unwrap());
         let buf_whole = read_to_vec(zippity_whole, read_size).await.unwrap();
@@ -1345,11 +1341,11 @@ mod test {
     /// Test that seeking to a valid location in a zip file using SeekFrom::Start works as expected
     #[proptest(async = "tokio")]
     async fn seeking_from_start(
-        #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
+        content: TestEntryData,
         #[strategy(read_size_strategy())] read_size: usize,
         #[strategy(0f64..=1f64)] seek_pos_fraction: f64,
     ) {
-        let (reader, buf_whole) = prepare_seek_test_data(&content, read_size).await;
+        let (reader, buf_whole) = prepare_seek_test_data(content, read_size).await;
         let seek_pos = calc_seek_pos(seek_pos_fraction, &buf_whole);
         let reported_pos = seek_read_and_verify(
             reader,
@@ -1364,11 +1360,11 @@ mod test {
     /// Test that seeking to a valid location in a zip file using SeekFrom::End works as expected
     #[proptest(async = "tokio")]
     async fn seeking_from_end(
-        #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
+        content: TestEntryData,
         #[strategy(read_size_strategy())] read_size: usize,
         #[strategy(0f64..=1f64)] seek_pos_fraction: f64,
     ) {
-        let (reader, buf_whole) = prepare_seek_test_data(&content, read_size).await;
+        let (reader, buf_whole) = prepare_seek_test_data(content, read_size).await;
         let seek_pos = calc_seek_pos(seek_pos_fraction, &buf_whole);
         let reported_pos = seek_read_and_verify(
             reader,
@@ -1384,12 +1380,12 @@ mod test {
     /// Does an extra seek first to move the cursor
     #[proptest(async = "tokio")]
     async fn seeking_from_cursor(
-        #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
+        content: TestEntryData,
         #[strategy(read_size_strategy())] read_size: usize,
         #[strategy(0f64..=1f64)] seek_pos1_fraction: f64,
         #[strategy(0f64..=1f64)] seek_pos2_fraction: f64,
     ) {
-        let (mut reader, buf_whole) = prepare_seek_test_data(&content, read_size).await;
+        let (mut reader, buf_whole) = prepare_seek_test_data(content, read_size).await;
         let seek_pos1 = calc_seek_pos(seek_pos1_fraction, &buf_whole);
         let seek_pos2 = calc_seek_pos(seek_pos2_fraction, &buf_whole);
         reader.seek(SeekFrom::Start(seek_pos1)).await.unwrap();
@@ -1409,10 +1405,10 @@ mod test {
     /// Also tests reusing the zippity reader object.
     #[proptest(async = "tokio")]
     async fn seeking_single_bytes(
-        #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
+        content: TestEntryData,
         #[strategy(proptest::collection::vec(0f64..=1f64, 1..100))] byte_positions_f: Vec<f64>,
     ) {
-        let (mut reader, buf_whole) = prepare_seek_test_data(&content, 8192).await;
+        let (mut reader, buf_whole) = prepare_seek_test_data(content, 8192).await;
         for fraction in byte_positions_f {
             let seek_pos = calc_seek_pos(fraction, &buf_whole);
 
@@ -1467,11 +1463,11 @@ mod test {
     /// Test that seeking to a valid location in a zip file using SeekFrom::Start works as expected
     #[proptest(async = "tokio")]
     async fn tell(
-        #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
+        content: TestEntryData,
         #[strategy(1usize..100usize)] read_size: usize,
         #[strategy(0f64..=1f64)] seek_pos_fraction: f64,
     ) {
-        let (mut reader, buf_whole) = prepare_seek_test_data(&content, read_size).await;
+        let (mut reader, buf_whole) = prepare_seek_test_data(content, read_size).await;
         dbg!(buf_whole.len());
         assert!(reader.tell() == 0);
         let seek_pos = calc_seek_pos(seek_pos_fraction, &buf_whole);
@@ -1676,16 +1672,10 @@ mod test {
     /// Test that seeking to a valid location in a zip file using SeekFrom::Start works as expected
     #[proptest(async = "tokio")]
     async fn clone(
-        #[strategy(content_strategy())] content: HashMap<String, Vec<u8>>,
+        mut reader: Reader<Bytes>,
         #[strategy(read_size_strategy())] read_size: usize,
         #[strategy(0f64..=1f64)] seek_pos_fraction: f64,
     ) {
-        let mut builder: Builder<&[u8]> = Builder::new();
-        content.iter().for_each(|(name, value)| {
-            builder.add_entry(name.clone(), value.as_ref()).unwrap();
-        });
-
-        let mut reader = builder.clone().build().await.unwrap();
         let seek_pos = (seek_pos_fraction * reader.size() as f64).floor() as u64;
         reader.seek_from_start_mut(seek_pos);
 
