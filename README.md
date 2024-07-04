@@ -8,8 +8,8 @@ Library for asynchronously creating a ZIP file on the fly.
 - [x] ZIP is created on the fly, can be directly streamed somewhere, does not need to be stored in RAM or on disk
 - [x] Supports Zip64 (files > 4GB).
 - [x] File size is known in advance
-- [x] Output is driven from outside (implements `tokio::io::AsyncRead`)
-- [x] Allows seeking in the file (implements `tokio::io::AsyncSeek`)
+- [x] Output is driven from outside (implements `[tokio::io::AsyncRead]`)
+- [x] Allows seeking in the file (implements `[tokio::io::AsyncSeek]`)
 - [X] Supports files on the filesystem as entries.
   - [ ] Supports tokio_uring
 - [ ] Supports integration with Actix Web (implements `actix_web::Responder`) behind feature flag
