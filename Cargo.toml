@@ -2,8 +2,9 @@
 name = "zippity"
 version = "0.1.0"
 edition = "2021"
-description = "Library for asynchronously creating a ZIP file on the fly."
 repository = "https://github.com/bluecube/zippity"
+license = "MIT"
+description = "Library for asynchronously creating a ZIP file on the fly."
 
 [features]
 default = ["tokio-file"]
