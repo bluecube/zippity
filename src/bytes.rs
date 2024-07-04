@@ -67,8 +67,20 @@ impl<D: EntryData> BytesStream<D> {
         }
     }
 
-    pub fn into_inner(self) -> Reader<D> {
+    pub fn into_reader(self) -> Reader<D> {
         self.reader
+    }
+
+    pub fn reader_ref(&self) -> &Reader<D> {
+        &self.reader
+    }
+
+    pub fn reader_mut(&mut self) -> &mut Reader<D> {
+        &mut self.reader
+    }
+
+    pub fn reader_pin_mut(self: Pin<&mut Self>) -> Pin<&mut Reader<D>> {
+        self.project().reader
     }
 }
 

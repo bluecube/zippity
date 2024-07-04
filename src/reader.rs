@@ -253,6 +253,59 @@ impl<D: EntryData> Reader<D> {
         }
     }
 
+    /// Creates a reader that contains no data and is always at EOF.
+    /// This is not a valid zip file!
+    /// The resulting Reader is useful mostly as a cheap dummy value for replacing an actual reader.
+    pub fn new_empty_file() -> Self {
+        Reader {
+            sizes: Sizes {
+                cd_offset: 0,
+                cd_size: 0,
+                eocd_offset: 0,
+                total_size: 0,
+            },
+            entries: Vec::new(),
+            read_state: ReadState {
+                current_chunk: Chunk::Finished,
+                chunk_processed_size: 0,
+                position: 0,
+                staging_buffer: Vec::new(),
+                to_skip: 0,
+            },
+            pinned: ReaderPinned::Nothing,
+        }
+    }
+
+    /// Takes the internal state of the pinned Reader, leaving state equivalent to
+    /// the result of [`Reader::new_empty_file()`]. Returns a new Reader with state equivalent
+    /// to `self` before the operation. This operation is O(1) and does not allocate.
+    pub fn take_pinned(self: Pin<&mut Self>) -> Reader<D> {
+        use std::mem::replace;
+
+        let empty = Self::new_empty_file();
+        let read_pos = self.tell();
+
+        let mut projected = self.project();
+
+        let sizes = replace(projected.sizes, empty.sizes);
+        let entries = replace(projected.entries, empty.entries);
+        let read_state = {
+            let _ = replace(projected.read_state, empty.read_state);
+            let mut read_state = ReadState::new(&entries);
+            read_state.seek_from_start(&sizes, &entries, read_pos);
+            read_state
+        };
+        projected.pinned.set(empty.pinned);
+        let pinned = ReaderPinned::Nothing;
+
+        Reader {
+            sizes,
+            entries,
+            read_state,
+            pinned,
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn get_entries(&self) -> &[ReaderEntry<D>] {
         &self.entries
@@ -878,6 +931,7 @@ mod test {
     use crate::Builder;
     use assert2::assert;
     use bytes::Bytes;
+    use futures_util::FutureExt;
     use std::{io::ErrorKind, pin::pin};
     use test_strategy::proptest;
     use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -1686,5 +1740,49 @@ mod test {
         let cloned_data = read_to_vec(cloned, read_size).await.unwrap();
 
         assert!(cloned_data == original_data);
+    }
+
+    /// Test that constructing an empty reader object works and provides no bytes.
+    #[proptest(async = "tokio")]
+    async fn reading_new_empty(#[strategy(read_size_strategy())] read_size: usize) {
+        let zippity = pin!(Reader::<&[u8]>::new_empty_file());
+        let v = read_to_vec(zippity, read_size).await.unwrap();
+        assert!(v == Vec::<u8>::new());
+    }
+
+    /// Test that empty constructed reader can be seeked in and stoll provides no data.
+    #[proptest(async = "tokio")]
+    async fn reading_new_empty_seeking(#[strategy(read_size_strategy())] read_size: usize) {
+        let mut zippity = pin!(Reader::<&[u8]>::new_empty_file());
+        zippity.as_mut().seek_from_start_pinned(100);
+        let v = read_to_vec(zippity.as_mut(), read_size).await.unwrap();
+        assert!(v == Vec::<u8>::new());
+    }
+
+    /// Test that taking a reader empties the source and returns the original data.
+    #[proptest(async = "tokio")]
+    async fn take_pinned(
+        #[any(crate::proptest::ArbitraryReaderParams { seek: true, ..Default::default()})]
+        reader: Reader<Bytes>,
+    ) {
+        let size = reader.size();
+        let pos = reader.tell();
+
+        let mut reader = pin!(reader);
+        let taken = pin!(reader.as_mut().take_pinned());
+
+        let mut buffer = vec![0; 1024];
+
+        assert!(
+            reader
+                .read(&mut buffer)
+                .now_or_never()
+                .expect("Reading taken value should return immediately")
+                .expect("Reading taken value should not fail")
+                == 0
+        );
+
+        let data = read_to_vec(taken, 8192).await.unwrap();
+        assert!(data.len() as u64 + pos == size);
     }
 }
