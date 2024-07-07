@@ -1,10 +1,11 @@
 #![doc = include_str!("../README.md")]
 #![forbid(unsafe_code)]
 
+use thiserror::Error;
+
 mod builder;
 mod crc_reader;
 mod entry_data;
-mod error;
 mod reader;
 mod structs;
 
@@ -24,7 +25,6 @@ mod test_util;
 
 pub use builder::{Builder, BuilderEntry};
 pub use entry_data::EntryData;
-pub use error::ZippityError;
 pub use reader::Reader;
 
 #[cfg(feature = "tokio-file")]
@@ -32,3 +32,31 @@ pub use tokio_file::TokioFileEntry;
 
 #[cfg(feature = "bytes")]
 pub use bytes::BytesStream;
+
+#[derive(Clone, Debug, Error, PartialEq)]
+pub enum Error {
+    #[error("Entry name too long (length must fit into 16bit)")]
+    TooLongEntryName { entry_name: String },
+    #[error("Duplicate entry name {entry_name}")]
+    DuplicateEntryName { entry_name: String },
+    #[error("Entry {entry_name} reports length {expected_size} B, but was {actual_size} B")]
+    LengthMismatch {
+        entry_name: String,
+        expected_size: u64,
+        actual_size: u64,
+    },
+    #[error("Entry {entry_name} was given a CRC value {expected_crc:08x} that does not match the computed {actual_crc:08x}")]
+    Crc32Mismatch {
+        entry_name: String,
+        expected_crc: u32,
+        actual_crc: u32,
+    },
+    #[error("Attempting to seek before the start of the file")]
+    SeekingBeforeStart,
+}
+
+impl Into<std::io::Error> for Error {
+    fn into(self) -> std::io::Error {
+        std::io::Error::other(self)
+    }
+}

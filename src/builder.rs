@@ -3,9 +3,9 @@ use std::io::Result;
 
 use crate::{
     entry_data::EntryData,
-    error::ZippityError,
     reader::{Reader, ReaderEntry, Sizes},
     structs::{self, PackedStructZippityExt},
+    Error,
 };
 
 #[derive(Clone, Debug)]
@@ -65,16 +65,16 @@ impl<D: EntryData> Builder<D> {
         &mut self,
         name: String,
         data: T,
-    ) -> std::result::Result<&mut BuilderEntry<D>, ZippityError> {
+    ) -> std::result::Result<&mut BuilderEntry<D>, Error> {
         use std::collections::btree_map::Entry::{Occupied, Vacant};
 
         if u16::try_from(name.len()).is_err() {
-            return Err(ZippityError::TooLongEntryName { entry_name: name });
+            return Err(Error::TooLongEntryName { entry_name: name });
         }
         let map_vacant_entry = match self.entries.entry(name) {
             Vacant(e) => e,
             Occupied(e) => {
-                return Err(ZippityError::DuplicateEntryName {
+                return Err(Error::DuplicateEntryName {
                     entry_name: e.key().clone(),
                 });
             }
@@ -144,7 +144,7 @@ mod test {
 
         let name_length = u16::MAX as usize + 1;
         let e = builder.add_entry("X".repeat(name_length), ()).unwrap_err();
-        assert_matches!(e, ZippityError::TooLongEntryName { entry_name } if entry_name.len() == name_length);
+        assert_matches!(e, Error::TooLongEntryName { entry_name } if entry_name.len() == name_length);
     }
 
     /// Tests an internal property of the builder -- that the sizes generated

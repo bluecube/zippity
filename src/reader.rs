@@ -1,5 +1,5 @@
 use std::future::Future;
-use std::io::{Error, Result, SeekFrom};
+use std::io::{Result, SeekFrom};
 use std::pin::Pin;
 use std::task::{ready, Context, Poll};
 
@@ -10,9 +10,8 @@ use tokio::io::{AsyncRead, AsyncSeek, ReadBuf};
 
 use crate::crc_reader::CrcReader;
 use crate::entry_data::EntryData;
-use crate::error::ZippityError;
-use crate::structs;
 use crate::structs::PackedStructZippityExt;
+use crate::{structs, Error};
 
 /// Minimum version needed to extract the zip64 extensions required by zippity
 pub const ZIP64_VERSION_TO_EXTRACT: u8 = 45;
@@ -511,11 +510,12 @@ impl ReadState {
                 let actual_crc = file_reader.get_crc32();
                 if let Some(expected_crc) = entry.crc32 {
                     if expected_crc != actual_crc {
-                        return Poll::Ready(Err(Error::other(ZippityError::Crc32Mismatch {
+                        return Poll::Ready(Err(Error::Crc32Mismatch {
                             entry_name: entry.name.clone(),
                             expected_crc,
                             actual_crc,
-                        })));
+                        }
+                        .into()));
                     }
                 }
                 entry.crc32 = Some(actual_crc);
@@ -526,11 +526,12 @@ impl ReadState {
             if self.chunk_processed_size == entry.size {
                 Poll::Ready(Ok(true)) // We're done with this state
             } else {
-                Poll::Ready(Err(Error::other(ZippityError::LengthMismatch {
+                Poll::Ready(Err(Error::LengthMismatch {
                     entry_name: entry.name.clone(),
                     expected_size: entry.size,
                     actual_size: self.chunk_processed_size,
-                })))
+                }
+                .into()))
             }
         } else {
             let written_chunk_size = remaining_before_poll - output.remaining();
@@ -877,7 +878,7 @@ impl<D: EntryData> AsyncSeek for Reader<D> {
             } else if offset < 0 {
                 Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    ZippityError::SeekingBeforeStart,
+                    Error::SeekingBeforeStart,
                 ))
             } else {
                 core::panic!("Attempting to seek to a position that causes u64 overflow");
