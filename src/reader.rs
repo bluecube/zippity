@@ -526,7 +526,7 @@ impl ReadState {
             if self.chunk_processed_size == entry.size {
                 Poll::Ready(Ok(true)) // We're done with this state
             } else {
-                Poll::Ready(Err(Error::LengthMismatch {
+                Poll::Ready(Err(Error::SizeMismatch {
                     entry_name: entry.name.clone(),
                     expected_size: entry.size,
                     actual_size: self.chunk_processed_size,
