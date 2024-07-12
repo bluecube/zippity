@@ -7,7 +7,7 @@ use zippity::Builder;
 
 #[tokio::test]
 async fn empty_archive() {
-    let mut zippity = pin!(Builder::<()>::new().build().await.unwrap());
+    let mut zippity = pin!(Builder::<()>::new().build().unwrap());
     let size = zippity.size();
 
     let mut buf = Vec::new();
@@ -23,9 +23,9 @@ async fn empty_archive() {
 async fn empty_entry_name() {
     let mut builder: Builder<()> = Builder::new();
 
-    builder.add_entry(String::new(), ()).unwrap();
+    builder.add_entry(String::new(), ()).await.unwrap();
 
-    let mut zippity = pin!(builder.build().await.unwrap());
+    let mut zippity = pin!(builder.build().unwrap());
     let mut buf = Vec::new();
     zippity.read_to_end(&mut buf).await.unwrap();
 
@@ -47,9 +47,10 @@ async fn archive_with_single_file() {
 
     builder
         .add_entry("Foo".to_owned(), b"bar!".as_slice())
+        .await
         .unwrap();
 
-    let mut zippity = pin!(builder.build().await.unwrap());
+    let mut zippity = pin!(builder.build().unwrap());
     let size = zippity.size();
 
     let mut buf = Vec::new();
@@ -73,9 +74,12 @@ async fn archive_with_single_file() {
 async fn archive_with_single_empty_file() {
     let mut builder: Builder<&[u8]> = Builder::new();
 
-    builder.add_entry("0".to_owned(), b"".as_slice()).unwrap();
+    builder
+        .add_entry("0".to_owned(), b"".as_slice())
+        .await
+        .unwrap();
 
-    let mut zippity = pin!(builder.build().await.unwrap());
+    let mut zippity = pin!(builder.build().unwrap());
     let size = zippity.size();
 
     let mut buf = Vec::new();

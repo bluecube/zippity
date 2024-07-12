@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use crate::{Builder, Reader};
 use bytes::Bytes;
-use futures_util::FutureExt;
 use proptest::{
     arbitrary::Arbitrary,
     strategy::{BoxedStrategy, Just, MapInto, Strategy},
@@ -63,8 +62,6 @@ impl Arbitrary for ReaderAndData {
                 ReaderAndData {
                     reader: builder
                         .build()
-                        .now_or_never()
-                        .expect("Reader<Bytes> always builds immediately")
                         .expect("Building Reader<Bytes> should never fail"),
                     data,
                 }
@@ -123,7 +120,7 @@ impl From<TestEntryData> for Builder<Bytes> {
 
         value.0.into_iter().for_each(|(name, content)| {
             builder
-                .add_entry(name.clone(), content.clone())
+                .add_entry_with_size(name.clone(), content.clone(), content.len() as u64)
                 .expect("Adding entries from hash map should never fail");
         });
 

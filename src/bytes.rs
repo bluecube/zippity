@@ -10,19 +10,26 @@ use futures_util::Stream;
 use pin_project::pin_project;
 use tokio_util::io::poll_read_buf;
 
-use crate::{entry_data::EntryData, reader::READ_SIZE, Reader};
+use crate::{
+    entry_data::{EntryData, EntrySize},
+    reader::READ_SIZE,
+    Reader,
+};
 
 impl EntryData for Bytes {
-    type SizeFuture = Ready<Result<u64>>;
     type Reader = Cursor<Bytes>;
-    type ReaderFuture = Ready<Result<Self::Reader>>;
+    type Future = Ready<Result<Self::Reader>>;
 
-    fn size(&self) -> Self::SizeFuture {
-        std::future::ready(Ok(self.len() as u64))
-    }
-
-    fn get_reader(&self) -> Self::ReaderFuture {
+    fn get_reader(&self) -> Self::Future {
         std::future::ready(Ok(Cursor::new(self.clone())))
+    }
+}
+
+impl EntrySize for Bytes {
+    type Future = Ready<Result<u64>>;
+
+    fn size(&self) -> Self::Future {
+        std::future::ready(Ok(self.len() as u64))
     }
 }
 
@@ -118,17 +125,19 @@ mod test {
     ) {
         let mut builder_slice: Builder<&[u8]> = Builder::new();
         let mut builder_bytes: Builder<Bytes> = Builder::new();
-        content.0.iter().for_each(|(name, value)| {
+        for (name, value) in content.0.iter() {
             builder_slice
                 .add_entry(name.clone(), value.as_ref())
+                .await
                 .unwrap();
             builder_bytes
                 .add_entry(name.clone(), value.clone())
+                .await
                 .unwrap();
-        });
+        }
 
-        let reader_slice = pin!(builder_slice.build().await.unwrap());
-        let reader_bytes = pin!(builder_bytes.build().await.unwrap());
+        let reader_slice = pin!(builder_slice.build().unwrap());
+        let reader_bytes = pin!(builder_bytes.build().unwrap());
 
         let data_slice = read_to_vec(reader_slice, read_size).await.unwrap();
         let data_bytes = read_to_vec(reader_bytes, read_size).await.unwrap();
@@ -142,12 +151,15 @@ mod test {
         #[strategy(read_size_strategy())] read_size: usize,
     ) {
         let mut builder: Builder<Bytes> = Builder::new();
-        content.0.iter().for_each(|(name, value)| {
-            builder.add_entry(name.clone(), value.clone()).unwrap();
-        });
+        for (name, value) in content.0.iter() {
+            builder
+                .add_entry(name.clone(), value.clone())
+                .await
+                .unwrap();
+        }
 
-        let bytes_stream = pin!(builder.clone().build().await.unwrap().into_bytes_stream());
-        let reader = pin!(builder.clone().build().await.unwrap());
+        let bytes_stream = pin!(builder.clone().build().unwrap().into_bytes_stream());
+        let reader = pin!(builder.clone().build().unwrap());
 
         let data_reader = read_to_vec(reader, read_size).await.unwrap();
         let data_stream = bytes_stream

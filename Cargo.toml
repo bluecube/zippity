@@ -10,7 +10,7 @@ description = "Library for asynchronously creating a ZIP file on the fly."
 default = ["tokio-file"]
 tokio-file = ["dep:futures-util", "tokio/fs"]
 bytes = ["dep:bytes", "dep:futures-core", "dep:tokio-util"]
-proptest = ["dep:proptest", "dep:futures-util", "bytes"]
+proptest = ["dep:proptest", "bytes"]
 actix-web = ["dep:actix-web", "bytes", "dep:http-range-header", "tokio/io-util"]
 
 [dependencies]

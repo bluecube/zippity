@@ -31,11 +31,11 @@ tokio_test::block_on(async {
 let mut builder = zippity::Builder::<&[u8]>::new();
 
 // Add data
-builder.add_entry("Entry name".to_owned(), b"Entry data".as_slice());
+builder.add_entry("Entry name".to_owned(), b"Entry data".as_slice()).await.unwrap();
 
 // Build the reader object
 // Note that this does not touch the data yet.
-let mut zippity = builder.build().await.unwrap();
+let mut zippity = builder.build().unwrap();
 
 // Getting file size is in O(1)
 println!("Total zip file size will be {}B", zippity.size());

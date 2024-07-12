@@ -61,7 +61,7 @@ pub mod funky_entry_data {
     };
     use tokio::io::{AsyncRead, AsyncSeek};
 
-    use crate::entry_data::EntryData;
+    use crate::entry_data::{EntryData, EntrySize};
 
     /// Async readable that returns zeros.
     #[derive(Clone, Debug)]
@@ -116,16 +116,19 @@ pub mod funky_entry_data {
     }
 
     impl EntryData for Zeros {
-        type SizeFuture = std::future::Ready<Result<u64>>;
         type Reader = Self;
-        type ReaderFuture = std::future::Ready<Result<Self>>;
+        type Future = std::future::Ready<Result<Self>>;
 
-        fn size(&self) -> Self::SizeFuture {
-            std::future::ready(Ok(self.size))
-        }
-
-        fn get_reader(&self) -> Self::ReaderFuture {
+        fn get_reader(&self) -> Self::Future {
             std::future::ready(Ok(self.clone()))
+        }
+    }
+
+    impl EntrySize for Zeros {
+        type Future = std::future::Ready<Result<u64>>;
+
+        fn size(&self) -> Self::Future {
+            std::future::ready(Ok(self.size))
         }
     }
 
@@ -229,21 +232,24 @@ pub mod funky_entry_data {
     }
 
     impl<'a> EntryData for LazyReader<'a> {
-        type SizeFuture = LazyReaderSizeFuture;
         type Reader = LazyReader<'a>;
-        type ReaderFuture = LazyReaderFuture<'a>;
+        type Future = LazyReaderFuture<'a>;
 
-        fn size(&self) -> Self::SizeFuture {
-            let s = self.inner.get_ref().len() as u64;
-            LazyReaderSizeFuture {
-                size: s,
+        fn get_reader(&self) -> Self::Future {
+            LazyReaderFuture {
+                data: self.inner.get_ref(),
                 delay: true,
             }
         }
+    }
 
-        fn get_reader(&self) -> Self::ReaderFuture {
-            LazyReaderFuture {
-                data: self.inner.get_ref(),
+    impl<'a> EntrySize for LazyReader<'a> {
+        type Future = LazyReaderSizeFuture;
+
+        fn size(&self) -> Self::Future {
+            let s = self.inner.get_ref().len() as u64;
+            LazyReaderSizeFuture {
+                size: s,
                 delay: true,
             }
         }
@@ -257,16 +263,19 @@ pub mod funky_entry_data {
     }
 
     impl EntryData for BadSize {
-        type SizeFuture = std::future::Ready<Result<u64>>;
         type Reader = Zeros;
-        type ReaderFuture = std::future::Ready<Result<Self::Reader>>;
+        type Future = std::future::Ready<Result<Self::Reader>>;
 
-        fn size(&self) -> Self::SizeFuture {
-            std::future::ready(Ok(self.reported_size))
-        }
-
-        fn get_reader(&self) -> Self::ReaderFuture {
+        fn get_reader(&self) -> Self::Future {
             std::future::ready(Ok(Zeros::new(self.actual_size)))
+        }
+    }
+
+    impl EntrySize for BadSize {
+        type Future = std::future::Ready<Result<u64>>;
+
+        fn size(&self) -> Self::Future {
+            std::future::ready(Ok(self.reported_size))
         }
     }
 
@@ -274,16 +283,19 @@ pub mod funky_entry_data {
     pub struct EmptyUnsupportedReader();
 
     impl EntryData for EmptyUnsupportedReader {
-        type SizeFuture = std::future::Ready<Result<u64>>;
         type Reader = std::io::Cursor<&'static [u8]>;
-        type ReaderFuture = std::future::Ready<Result<Self::Reader>>;
+        type Future = std::future::Ready<Result<Self::Reader>>;
 
-        fn size(&self) -> Self::SizeFuture {
-            std::future::ready(Ok(0))
-        }
-
-        fn get_reader(&self) -> Self::ReaderFuture {
+        fn get_reader(&self) -> Self::Future {
             unimplemented!("This test struct doesn't support getting futures")
+        }
+    }
+
+    impl EntrySize for EmptyUnsupportedReader {
+        type Future = std::future::Ready<Result<u64>>;
+
+        fn size(&self) -> Self::Future {
+            std::future::ready(Ok(0))
         }
     }
 }

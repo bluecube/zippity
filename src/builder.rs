@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::io::Result;
 
 use crate::{
-    entry_data::EntryData,
+    entry_data::{EntryData, EntrySize},
     reader::{Reader, ReaderEntry, Sizes},
     structs::{self, PackedStructZippityExt},
     Error,
@@ -12,20 +12,31 @@ use crate::{
 pub struct BuilderEntry<D> {
     data: D,
     crc32: Option<u32>,
+    data_size: u64,
 }
 
 impl<D: EntryData> BuilderEntry<D> {
+    /// Sets the CRC32 of this entry.
+    ///
+    /// This is helpful, because if the `[Reader]` seeks over the file content, but still needs
+    /// to output the CRC, we can just output this value instead of opening and the entry and
+    /// calculating it.
+    /// Providing a wrong value will be detected in some cases, but generally it will lead to
+    /// a damaged zip file.
+    /// The CRC32 values for a file can be obtained from the method `[Reader::crc32s()]` after
+    /// it was calculated in the `[Reader]`.
     pub fn crc32(&mut self, crc32: u32) -> &mut Self {
         self.crc32 = Some(crc32);
         self
     }
-    fn get_local_size(&self, name: &str, data_size: u64) -> u64 {
+
+    fn get_local_size(&self, name: &str) -> u64 {
         let local_header = structs::LocalFileHeader::packed_size();
         let zip64_extra_data = structs::Zip64ExtraField::packed_size();
         let filename = name.len() as u64;
         let data_descriptor = structs::DataDescriptor64::packed_size();
 
-        local_header + zip64_extra_data + filename + data_size + data_descriptor
+        local_header + zip64_extra_data + filename + self.data_size + data_descriptor
     }
 
     fn get_cd_header_size(name: &str) -> u64 {
@@ -59,12 +70,19 @@ impl<D: EntryData> Builder<D> {
 
     /// Adds an entry to the zip file.
     /// The returned reference can be used to add metadata to the entry.
+    ///
+    /// This variant of adding the entry does not requrire EntrySize to be implemented, or can
+    /// be used if the size is known ahead of time from some other source.
+    /// Providing a wrong value will be detected in some cases while reading the zip, but generally
+    /// it will lead to a damaged zip file.
+    ///
     /// # Errors
     /// Will return an error if `name` is longer than `u16::MAX` (limitation of Zip format)
-    pub fn add_entry<T: Into<D>>(
+    pub fn add_entry_with_size<T: Into<D>>(
         &mut self,
         name: String,
         data: T,
+        size: u64,
     ) -> std::result::Result<&mut BuilderEntry<D>, Error> {
         use std::collections::btree_map::Entry::{Occupied, Vacant};
 
@@ -81,18 +99,21 @@ impl<D: EntryData> Builder<D> {
         };
 
         let data = data.into();
-        let inserted = map_vacant_entry.insert(BuilderEntry { data, crc32: None });
+        let inserted = map_vacant_entry.insert(BuilderEntry {
+            data,
+            crc32: None,
+            data_size: size,
+        });
         Ok(inserted)
     }
 
-    pub async fn build(self) -> Result<Reader<D>> {
+    pub fn build(self) -> Result<Reader<D>> {
         let mut offset: u64 = 0;
         let mut cd_size: u64 = 0;
         let entries = {
             let mut entries = Vec::with_capacity(self.entries.len());
             for (name, entry) in self.entries.into_iter() {
-                let data_size = entry.data.size().await?;
-                let local_size = entry.get_local_size(&name, data_size);
+                let local_size = entry.get_local_size(&name);
                 let offset_before_entry = offset;
                 offset += local_size;
                 cd_size += BuilderEntry::<D>::get_cd_header_size(&name);
@@ -101,7 +122,7 @@ impl<D: EntryData> Builder<D> {
                     entry.data,
                     offset_before_entry,
                     entry.crc32,
-                    data_size,
+                    entry.data_size,
                 ));
             }
             entries
@@ -126,6 +147,22 @@ impl<D: EntryData> Builder<D> {
     }
 }
 
+impl<D: EntryData + EntrySize> Builder<D> {
+    /// Adds an entry to the zip file.
+    /// The returned reference can be used to add metadata to the entry.
+    /// # Errors
+    /// Will return an error if `name` is longer than `u16::MAX` (limitation of Zip format)
+    pub async fn add_entry<T: Into<D>>(
+        &mut self,
+        name: String,
+        data: T,
+    ) -> std::result::Result<&mut BuilderEntry<D>, Error> {
+        let data = data.into();
+        let size = data.size().await?;
+        self.add_entry_with_size(name, data, size)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use crate::proptest::TestEntryData;
@@ -133,17 +170,21 @@ mod test {
     use super::*;
     use assert2::assert;
     use assert_matches::assert_matches;
+    use bytes::Bytes;
 
     use std::collections::HashMap;
 
     use test_strategy::proptest;
 
-    #[test]
-    fn too_long_enty_name() {
+    #[tokio::test]
+    async fn too_long_enty_name() {
         let mut builder: Builder<()> = Builder::new();
 
         let name_length = u16::MAX as usize + 1;
-        let e = builder.add_entry("X".repeat(name_length), ()).unwrap_err();
+        let e = builder
+            .add_entry("X".repeat(name_length), ())
+            .await
+            .unwrap_err();
         assert_matches!(e, Error::TooLongEntryName { entry_name } if entry_name.len() == name_length);
     }
 
@@ -153,24 +194,19 @@ mod test {
     async fn local_size_matches_chunks(content: TestEntryData) {
         use crate::reader::Chunk;
 
-        let mut builder: Builder<&[u8]> = Builder::new();
-
-        content.0.iter().for_each(|(name, value)| {
-            builder.add_entry(name.clone(), value.as_ref()).unwrap();
-        });
+        let builder: Builder<Bytes> = content.into();
 
         let local_sizes = {
             let mut local_sizes = HashMap::with_capacity(builder.entries.len());
 
             for (k, v) in builder.entries.iter() {
-                let size = v.data.size().await.unwrap();
-                local_sizes.insert(k.clone(), v.get_local_size(k, size));
+                local_sizes.insert(k.clone(), v.get_local_size(k));
             }
 
             local_sizes
         };
 
-        let zippity = builder.build().await.unwrap();
+        let zippity = builder.build().unwrap();
 
         let entries = zippity.get_entries();
 
@@ -193,5 +229,21 @@ mod test {
 
             assert!(local_sizes[entries[i].get_name()] == entry_local_size);
         }
+    }
+
+    #[proptest(async = "tokio")]
+    async fn add_entry_stores_size_correctly(d: Vec<u8>) {
+        let mut builder = Builder::<&[u8]>::new();
+        let be = builder.add_entry("x".into(), d.as_ref()).await.unwrap();
+        assert!(be.data_size == d.len() as u64);
+    }
+
+    #[proptest(async = "tokio")]
+    async fn add_entry_with_size_stores_size_correctly(d: Vec<u8>, some_other_size: u64) {
+        let mut builder = Builder::<&[u8]>::new();
+        let be = builder
+            .add_entry_with_size("x".into(), d.as_ref(), some_other_size)
+            .unwrap();
+        assert!(be.data_size == some_other_size);
     }
 }

@@ -226,7 +226,7 @@ mod test {
     #[tokio::test]
     // Test the headers are set as expected when requesting the zip file without range header.
     async fn default_response_headers() {
-        let reader = Builder::<&[u8]>::new().build().await.unwrap();
+        let reader = Builder::<&[u8]>::new().build().unwrap();
         let size = reader.size();
 
         let responder = reader.into_responder();
@@ -250,7 +250,7 @@ mod test {
     // Test the headers are set as expected when requesting the zip file with range header.
     #[tokio::test]
     async fn range_response_headers() {
-        let reader = Builder::<&[u8]>::new().build().await.unwrap();
+        let reader = Builder::<&[u8]>::new().build().unwrap();
         let size = reader.size();
 
         let responder = reader.into_responder();

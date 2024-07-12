@@ -1,4 +1,4 @@
-use crate::entry_data::EntryData;
+use crate::entry_data::{EntryData, EntrySize};
 use futures_util::future::TryFutureExt;
 use std::{future::Future, io::Result, path::PathBuf, pin::Pin};
 use tokio::fs::{metadata, File};
@@ -23,16 +23,19 @@ impl EntryData for TokioFileEntry {
     // Once `impl Trait` in associated types becomes stable,
     // we should convert to directly using those.
 
-    type SizeFuture = Pin<Box<dyn Future<Output = Result<u64>>>>;
     type Reader = File;
-    type ReaderFuture = Pin<Box<dyn Future<Output = Result<File>>>>;
+    type Future = Pin<Box<dyn Future<Output = Result<File>>>>;
 
-    fn size(&self) -> Self::SizeFuture {
-        Box::pin(metadata(self.0.clone()).map_ok(|m| m.len()))
-    }
-
-    fn get_reader(&self) -> Self::ReaderFuture {
+    fn get_reader(&self) -> Self::Future {
         Box::pin(File::open(self.0.clone()))
+    }
+}
+
+impl EntrySize for TokioFileEntry {
+    type Future = Pin<Box<dyn Future<Output = Result<u64>>>>;
+
+    fn size(&self) -> Self::Future {
+        Box::pin(metadata(self.0.clone()).map_ok(|m| m.len()))
     }
 }
 
