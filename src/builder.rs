@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use indexmap::IndexMap;
 use std::io::Result;
 
 use crate::{
@@ -51,7 +51,7 @@ impl<D: EntryData> BuilderEntry<D> {
 #[derive(Clone, Debug)]
 pub struct Builder<D: EntryData> {
     // TODO: BTreeMap? Really? Perhaps we should use something that preserves insertion order.
-    entries: BTreeMap<String, BuilderEntry<D>>,
+    entries: IndexMap<String, BuilderEntry<D>>,
 }
 
 impl<D: EntryData> Default for Builder<D> {
@@ -64,7 +64,7 @@ impl<D: EntryData> Builder<D> {
     /// Creates a new empty Builder.
     pub fn new() -> Self {
         Builder {
-            entries: BTreeMap::new(),
+            entries: IndexMap::new(),
         }
     }
 
@@ -84,14 +84,13 @@ impl<D: EntryData> Builder<D> {
         data: T,
         size: u64,
     ) -> std::result::Result<&mut BuilderEntry<D>, Error> {
-        use std::collections::btree_map::Entry::{Occupied, Vacant};
-
+        use indexmap::map::Entry;
         if u16::try_from(name.len()).is_err() {
             return Err(Error::TooLongEntryName { entry_name: name });
         }
         let map_vacant_entry = match self.entries.entry(name) {
-            Vacant(e) => e,
-            Occupied(e) => {
+            Entry::Vacant(e) => e,
+            Entry::Occupied(e) => {
                 return Err(Error::DuplicateEntryName {
                     entry_name: e.key().clone(),
                 });

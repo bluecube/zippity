@@ -1,4 +1,7 @@
-use std::{collections::HashMap, pin::pin};
+use std::{
+    collections::{HashMap, HashSet},
+    pin::pin,
+};
 
 use test_strategy::proptest;
 use tokio::io::AsyncReadExt;
@@ -125,4 +128,30 @@ async fn any_archive(reader_and_data: zippity::proptest::ReaderAndData) {
         unpacked_content.insert(name, file_content.into());
     }
     assert!(unpacked_content == content.0);
+}
+
+#[proptest(async = "tokio")]
+async fn entry_ordering(entry_names: HashSet<String>) {
+    let entry_names: Vec<_> = entry_names.into_iter().collect(); // Fix the order of the input
+
+    let mut builder = Builder::<()>::new();
+
+    for name in entry_names.iter() {
+        builder.add_entry(name.clone(), ()).await.unwrap();
+    }
+
+    let mut zippity = pin!(builder.build().unwrap());
+    let mut buf = Vec::new();
+    zippity.read_to_end(&mut buf).await.unwrap();
+
+    let mut unpacked = ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip");
+
+    let unpacked_entries: Vec<_> = (0..unpacked.len())
+        .map(|i| {
+            let zipfile = unpacked.by_index(i).unwrap();
+            std::str::from_utf8(zipfile.name_raw()).unwrap().to_string()
+        })
+        .collect();
+
+    assert!(unpacked_entries == entry_names);
 }
