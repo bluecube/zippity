@@ -12,9 +12,12 @@ Library for asynchronously creating a ZIP file on the fly.
 - [x] Allows seeking in the file (implements `[tokio::io::AsyncSeek]`)
 - [X] Supports files on the filesystem as entries.
   - [ ] Supports tokio_uring
-- [X] Supports integration with Actix Web (see [Reader::into_responder()])
+- [X] Supports integration with Actix Web (see `[Reader::into_responder()]`)
+- [ ] Entry metadata
 
 ## Non-features
+These are not planned to be implemented.
+
 - Compression: The zip only uses store method.
 - Encryption
 - Zip reading
@@ -49,7 +52,11 @@ copy(&mut zippity, &mut sink()).await.unwrap();
 })
 ```
 
-# Crate features
+## Current state
+Consider this a beta version.
+The library is mostly finished, with lot of polish missing for version 1.0.0.
+
+## Crate features
 
 | Name | Description | Default |
 | ---- | ----------- | ------- |
