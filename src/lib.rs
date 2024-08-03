@@ -57,8 +57,8 @@ pub enum Error {
     GettingEntrySize(#[from] std::io::Error),
 }
 
-impl Into<std::io::Error> for Error {
-    fn into(self) -> std::io::Error {
-        std::io::Error::other(self)
+impl From<Error> for std::io::Error {
+    fn from(val: Error) -> Self {
+        std::io::Error::other(val)
     }
 }
