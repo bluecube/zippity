@@ -29,8 +29,18 @@ impl LocalFileHeader {
 #[derive(Debug, PackedStruct)]
 #[packed_struct(bit_numbering = "lsb0", size_bytes = "2")]
 pub struct GpBitFlag {
-    #[packed_field(bits = "3")]
+    // TODO: The fields for language encoding and data descriptor should be swapped,
+    // according to the APPNOTE. (3 and 11 instead of 11 and 3).
+    // Hovewer for some reason this was serialized badly.
+    // I'm pretty sure this is caused by my misuse of packed_struct, but this
+    // works and  I'm done debugging this for now...
+    // Might be related to https://github.com/hashmismatch/packed_struct.rs/issues/92
+    #[packed_field(bits = "11")]
     pub use_data_descriptor: bool,
+
+    /// Filename and comments in UTF-8
+    #[packed_field(bits = "3")]
+    pub language_encoding: bool,
 }
 
 #[derive(Debug, PackedStruct)]
@@ -71,7 +81,8 @@ pub struct CentralDirectoryHeader {
     #[packed_field(size_bytes = "2")]
     pub version_made_by: VersionMadeBy,
     pub version_to_extract: u16,
-    pub flags: u16,
+    #[packed_field(size_bytes = "2")]
+    pub flags: GpBitFlag,
     #[packed_field(size_bytes = "2", ty = "enum")]
     pub compression: Compression,
     pub last_mod_time: u16,
@@ -95,9 +106,9 @@ impl CentralDirectoryHeader {
 #[derive(Debug, PackedStruct)]
 #[packed_struct(endian = "lsb")]
 pub struct VersionMadeBy {
+    pub spec_version: u8,
     #[packed_field(size_bytes = "1", ty = "enum")]
     pub os: VersionMadeByOs,
-    pub spec_version: u8,
 }
 
 #[derive(Clone, Copy, Debug, PrimitiveEnum_u8)]

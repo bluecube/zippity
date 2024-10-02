@@ -420,10 +420,11 @@ impl ReadState {
                 version_to_extract: ZIP64_VERSION_TO_EXTRACT.into(),
                 flags: structs::GpBitFlag {
                     use_data_descriptor: true,
+                    language_encoding: true,
                 },
                 compression: structs::Compression::Store,
-                last_mod_time: 0,
-                last_mod_date: 0,
+                last_mod_time: 0, // TODO
+                last_mod_date: 0, // TODO
                 crc32: 0,
                 compressed_size: u32::MAX,
                 uncompressed_size: u32::MAX,
@@ -580,14 +581,17 @@ impl ReadState {
             structs::CentralDirectoryHeader {
                 signature: structs::CentralDirectoryHeader::SIGNATURE,
                 version_made_by: structs::VersionMadeBy {
-                    os: structs::VersionMadeByOs::Unix,
                     spec_version: ZIP64_VERSION_TO_EXTRACT,
+                    os: structs::VersionMadeByOs::Unix,
                 },
                 version_to_extract: ZIP64_VERSION_TO_EXTRACT.into(),
-                flags: 0,
+                flags: structs::GpBitFlag {
+                    use_data_descriptor: false,
+                    language_encoding: true,
+                },
                 compression: structs::Compression::Store,
-                last_mod_time: 0,
-                last_mod_date: 0,
+                last_mod_time: 0, // TODO
+                last_mod_date: 0, // TODO
                 crc32,
                 compressed_size: u32::MAX,
                 uncompressed_size: u32::MAX,
@@ -598,7 +602,7 @@ impl ReadState {
                     .unwrap_or_else(|_| unreachable!("Checked when constructing entries.")),
                 extra_field_len: structs::Zip64ExtraField::packed_size_u16(),
                 file_comment_length: 0,
-                disk_number_start: u16::MAX,
+                disk_number_start: 0,
                 internal_attributes: 0,
                 external_attributes: 0,
                 local_header_offset: u32::MAX,
