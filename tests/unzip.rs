@@ -1,8 +1,7 @@
-use std::{
-    collections::{HashMap, HashSet},
-    pin::pin,
-};
+use std::{collections::HashSet, pin::pin};
 
+use bytes::Bytes;
+use indexmap::IndexMap;
 use test_strategy::proptest;
 use tokio::io::AsyncReadExt;
 use zip::ZipArchive;
@@ -116,7 +115,7 @@ async fn any_archive(reader_and_data: zippity::proptest::ReaderAndData) {
     let mut unpacked = ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip");
     assert!(unpacked.len() == content.0.len());
 
-    let mut unpacked_content = HashMap::new();
+    let mut unpacked_content: IndexMap<String, Bytes> = IndexMap::new();
     for i in 0..unpacked.len() {
         dbg!(&i);
         let mut zipfile = unpacked.by_index(i).unwrap();

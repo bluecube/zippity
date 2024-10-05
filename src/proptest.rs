@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use indexmap::IndexMap;
+
 use crate::{Builder, Reader};
 use bytes::Bytes;
 use proptest::{
@@ -8,7 +10,7 @@ use proptest::{
 };
 
 #[derive(Clone, Debug)]
-pub struct TestEntryData(pub HashMap<String, Bytes>);
+pub struct TestEntryData(pub IndexMap<String, Bytes>);
 
 /// A type that holds both a reader and a hash map with the entries the reader contains.
 #[derive(Clone, Debug)]
@@ -110,7 +112,7 @@ impl From<ReaderAndData> for Reader<Bytes> {
 
 impl From<HashMap<String, Bytes>> for TestEntryData {
     fn from(value: HashMap<String, Bytes>) -> Self {
-        TestEntryData(value)
+        TestEntryData(value.into_iter().collect())
     }
 }
 
