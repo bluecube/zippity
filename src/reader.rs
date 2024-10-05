@@ -907,11 +907,7 @@ impl<D: EntryData> AsyncSeek for Reader<D> {
 
 impl<D: EntryData + std::fmt::Debug> std::fmt::Debug for Reader<D> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("zippity::Reader")
-            .field("sizes", &self.sizes)
-            .field("read_state", &self.read_state)
-            .field("entries", &self.entries)
-            .finish_non_exhaustive()
+        f.debug_struct("zippity::Reader").finish_non_exhaustive()
     }
 }
 
