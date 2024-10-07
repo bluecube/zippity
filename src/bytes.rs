@@ -136,8 +136,8 @@ mod test {
                 .unwrap();
         }
 
-        let reader_slice = pin!(builder_slice.build().unwrap());
-        let reader_bytes = pin!(builder_bytes.build().unwrap());
+        let reader_slice = pin!(builder_slice.build());
+        let reader_bytes = pin!(builder_bytes.build());
 
         let data_slice = read_to_vec(reader_slice, read_size).await.unwrap();
         let data_bytes = read_to_vec(reader_bytes, read_size).await.unwrap();
@@ -158,8 +158,8 @@ mod test {
                 .unwrap();
         }
 
-        let bytes_stream = pin!(builder.clone().build().unwrap().into_bytes_stream());
-        let reader = pin!(builder.clone().build().unwrap());
+        let bytes_stream = pin!(builder.clone().build().into_bytes_stream());
+        let reader = pin!(builder.clone().build());
 
         let data_reader = read_to_vec(reader, read_size).await.unwrap();
         let data_stream = bytes_stream

@@ -1,5 +1,4 @@
 use indexmap::IndexMap;
-use std::io::Result;
 
 use crate::{
     entry_data::{EntryData, EntrySize},
@@ -105,7 +104,7 @@ impl<D: EntryData> Builder<D> {
         Ok(inserted)
     }
 
-    pub fn build(self) -> Result<Reader<D>> {
+    pub fn build(self) -> Reader<D> {
         let mut offset: u64 = 0;
         let mut cd_size: u64 = 0;
         let entries = {
@@ -133,7 +132,7 @@ impl<D: EntryData> Builder<D> {
         let eocd_offset = cd_offset + cd_size;
         let total_size = cd_offset + cd_size + eocd_size;
 
-        Ok(Reader::new(
+        Reader::new(
             Sizes {
                 cd_offset,
                 cd_size,
@@ -141,7 +140,7 @@ impl<D: EntryData> Builder<D> {
                 total_size,
             },
             entries,
-        ))
+        )
     }
 }
 
@@ -204,7 +203,7 @@ mod test {
             local_sizes
         };
 
-        let zippity = builder.build().unwrap();
+        let zippity = builder.build();
 
         let entries = zippity.get_entries();
 

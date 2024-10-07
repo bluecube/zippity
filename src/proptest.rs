@@ -62,9 +62,7 @@ impl Arbitrary for ReaderAndData {
                 let builder: Builder<Bytes> = data.clone().into();
 
                 ReaderAndData {
-                    reader: builder
-                        .build()
-                        .expect("Building Reader<Bytes> should never fail"),
+                    reader: builder.build(),
                     data,
                 }
             });

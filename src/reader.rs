@@ -1315,7 +1315,7 @@ mod test {
                 .await
                 .unwrap();
         }
-        let zippity = pin!(builder.build().unwrap());
+        let zippity = pin!(builder.build());
 
         let expected_size = zippity.size();
         let actual_size = measure_size(zippity).await.unwrap();
@@ -1344,9 +1344,9 @@ mod test {
                 .unwrap();
         }
 
-        let zippity_slice = pin!(builder_slice.build().unwrap());
+        let zippity_slice = pin!(builder_slice.build());
         let output_slice = read_to_vec(zippity_slice, read_size).await.unwrap();
-        let zippity_lazy = pin!(builder_lazy.build().unwrap());
+        let zippity_lazy = pin!(builder_lazy.build());
         let output_lazy = read_to_vec(zippity_lazy, read_size).await.unwrap();
 
         assert!(output_slice == output_lazy);
@@ -1360,10 +1360,10 @@ mod test {
     ) -> (Reader<Bytes>, Vec<u8>) {
         let builder: Builder<Bytes> = content.into();
 
-        let zippity_whole = pin!(builder.clone().build().unwrap());
+        let zippity_whole = pin!(builder.clone().build());
         let buf_whole = read_to_vec(zippity_whole, read_size).await.unwrap();
 
-        let zippity_ret = builder.build().unwrap();
+        let zippity_ret = builder.build();
 
         (zippity_ret, buf_whole)
     }
@@ -1482,7 +1482,7 @@ mod test {
     /// Test that seeking to a negative location results in an error.
     #[proptest(async = "tokio")]
     async fn seeking_before_start(distance: u8) {
-        let mut reader = pin!(Builder::<()>::new().build().unwrap());
+        let mut reader = pin!(Builder::<()>::new().build());
         let seek_offset = -(distance as i64) - 1;
         let err = reader
             .seek(SeekFrom::Current(seek_offset))
@@ -1498,7 +1498,7 @@ mod test {
     /// Test that seeking to a valid location in a zip file using SeekFrom::Start works as expected
     #[proptest(async = "tokio")]
     async fn seeking_after_end_from_start(distance: u8) {
-        let mut reader = pin!(Builder::<()>::new().build().unwrap());
+        let mut reader = pin!(Builder::<()>::new().build());
         let seek_pos = reader.size() + distance as u64;
         let reported_position = reader.seek(SeekFrom::Start(seek_pos)).await.unwrap();
         assert!(reported_position == seek_pos);
@@ -1510,7 +1510,7 @@ mod test {
     /// Test that seeking to a valid location in a zip file using SeekFrom::Start works as expected
     #[proptest(async = "tokio")]
     async fn seeking_after_end_from_current(distance: u8) {
-        let mut reader = pin!(Builder::<()>::new().build().unwrap());
+        let mut reader = pin!(Builder::<()>::new().build());
         let seek_position = reader.size() as i64 + distance as i64;
         let reported_position = reader.seek(SeekFrom::Current(seek_position)).await.unwrap();
         assert!(reported_position == seek_position as u64);
@@ -1555,7 +1555,7 @@ mod test {
             .await
             .unwrap();
 
-        let zippity = pin!(builder.build().unwrap());
+        let zippity = pin!(builder.build());
         let e = read_to_vec(zippity, 1024).await.unwrap_err();
 
         assert!(e.kind() == ErrorKind::Other);
@@ -1580,7 +1580,7 @@ mod test {
                 .await
                 .unwrap();
 
-            let mut zippity = pin!(builder.build().unwrap());
+            let mut zippity = pin!(builder.build());
             zippity
                 .seek(SeekFrom::Start(
                     seek_pos_in_entry
@@ -1631,7 +1631,7 @@ mod test {
             let mut builder1 = Builder::<funky_entry_data::LazyReader>::new();
             builder1.add_entry("X".to_owned(), test_data).await.unwrap();
 
-            let mut reader1 = pin!(builder1.build().unwrap());
+            let mut reader1 = pin!(builder1.build());
             let whole_zip = read_to_vec(reader1.as_mut(), 8192).await.unwrap();
 
             let entry_crc = {
@@ -1650,7 +1650,7 @@ mod test {
             if pre_fill_crc {
                 entry.crc32(entry_crc);
             }
-            let mut reader2 = pin!(builder2.build().unwrap());
+            let mut reader2 = pin!(builder2.build());
 
             if seek_past_data {
                 reader2
@@ -1714,7 +1714,7 @@ mod test {
             .await
             .unwrap();
 
-        let zippity = pin!(builder.build().unwrap());
+        let zippity = pin!(builder.build());
 
         read_to_vec(zippity, read_size).await.unwrap();
         // No need to check anything else, get_reader is already unimplemented
@@ -1729,7 +1729,7 @@ mod test {
             .unwrap()
             .crc32(0); // Passing in a wrong CRC
 
-        let zippity = pin!(builder.build().unwrap());
+        let zippity = pin!(builder.build());
         let e = read_to_vec(zippity, 8192).await.unwrap_err();
         dbg!(e);
     }

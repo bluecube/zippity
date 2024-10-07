@@ -9,7 +9,7 @@ use zippity::Builder;
 
 #[tokio::test]
 async fn empty_archive() {
-    let mut zippity = pin!(Builder::<()>::new().build().unwrap());
+    let mut zippity = pin!(Builder::<()>::new().build());
     let size = zippity.size();
 
     let mut buf = Vec::new();
@@ -27,7 +27,7 @@ async fn empty_entry_name() {
 
     builder.add_entry(String::new(), ()).await.unwrap();
 
-    let mut zippity = pin!(builder.build().unwrap());
+    let mut zippity = pin!(builder.build());
     let mut buf = Vec::new();
     zippity.read_to_end(&mut buf).await.unwrap();
 
@@ -52,7 +52,7 @@ async fn archive_with_single_file() {
         .await
         .unwrap();
 
-    let mut zippity = pin!(builder.build().unwrap());
+    let mut zippity = pin!(builder.build());
     let size = zippity.size();
 
     let mut buf = Vec::new();
@@ -81,7 +81,7 @@ async fn archive_with_single_empty_file() {
         .await
         .unwrap();
 
-    let mut zippity = pin!(builder.build().unwrap());
+    let mut zippity = pin!(builder.build());
     let size = zippity.size();
 
     let mut buf = Vec::new();
@@ -139,7 +139,7 @@ async fn entry_ordering(entry_names: HashSet<String>) {
         builder.add_entry(name.clone(), ()).await.unwrap();
     }
 
-    let mut zippity = pin!(builder.build().unwrap());
+    let mut zippity = pin!(builder.build());
     let mut buf = Vec::new();
     zippity.read_to_end(&mut buf).await.unwrap();
 

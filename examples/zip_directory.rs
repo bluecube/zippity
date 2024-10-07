@@ -18,7 +18,7 @@ async fn main() -> std::io::Result<()> {
     let args = Args::parse();
 
     let builder = gather_metadata(&args.source_dir)?;
-    let mut zippity = builder.build()?;
+    let mut zippity = builder.build();
 
     println!("Zip file will be {} B large", zippity.size());
 

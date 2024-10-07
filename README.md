@@ -38,7 +38,7 @@ builder.add_entry("Entry name".to_owned(), b"Entry data".as_slice()).await.unwra
 
 // Build the reader object
 // Note that this does not touch the data yet.
-let mut zippity = builder.build().unwrap();
+let mut zippity = builder.build();
 
 // Getting file size is in O(1)
 println!("Total zip file size will be {}B", zippity.size());
