@@ -50,7 +50,6 @@ impl<D: EntryData> BuilderEntry<D> {
 
 #[derive(Clone, Debug)]
 pub struct Builder<D: EntryData> {
-    // TODO: BTreeMap? Really? Perhaps we should use something that preserves insertion order.
     entries: IndexMap<String, BuilderEntry<D>>,
 }
 
