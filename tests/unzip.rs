@@ -5,33 +5,20 @@ use indexmap::IndexMap;
 use test_strategy::proptest;
 use tokio::io::AsyncReadExt;
 use zip::ZipArchive;
-use zippity::Builder;
+use zippity::{proptest::TestEntryData, Builder, EntryData};
 
 #[tokio::test]
 async fn empty_archive() {
-    let mut zippity = pin!(Builder::<()>::new().build());
-    let size = zippity.size();
-
-    let mut buf = Vec::new();
-    zippity.read_to_end(&mut buf).await.unwrap();
-
-    assert!(size == (buf.len() as u64));
-
-    let unpacked = ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip");
+    let unpacked = build_and_open(Builder::<()>::new()).await;
     assert!(unpacked.is_empty());
 }
 
 #[tokio::test]
 async fn empty_entry_name() {
     let mut builder: Builder<()> = Builder::new();
-
     builder.add_entry(String::new(), ()).await.unwrap();
 
-    let mut zippity = pin!(builder.build());
-    let mut buf = Vec::new();
-    zippity.read_to_end(&mut buf).await.unwrap();
-
-    let mut unpacked = ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip");
+    let mut unpacked = build_and_open(builder).await;
     assert!(unpacked.len() == 1);
 
     let mut zipfile = unpacked.by_index(0).unwrap();
@@ -52,15 +39,7 @@ async fn archive_with_single_file() {
         .await
         .unwrap();
 
-    let mut zippity = pin!(builder.build());
-    let size = zippity.size();
-
-    let mut buf = Vec::new();
-    zippity.read_to_end(&mut buf).await.unwrap();
-
-    assert!(size == (buf.len() as u64));
-
-    let mut unpacked = ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip");
+    let mut unpacked = build_and_open(builder).await;
     assert!(unpacked.len() == 1);
 
     let mut zipfile = unpacked.by_index(0).unwrap();
@@ -81,15 +60,7 @@ async fn archive_with_single_empty_file() {
         .await
         .unwrap();
 
-    let mut zippity = pin!(builder.build());
-    let size = zippity.size();
-
-    let mut buf = Vec::new();
-    zippity.read_to_end(&mut buf).await.unwrap();
-
-    assert!(size == (buf.len() as u64));
-
-    let mut unpacked = ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip");
+    let mut unpacked = build_and_open(builder).await;
     assert!(unpacked.len() == 1);
 
     let mut zipfile = unpacked.by_index(0).unwrap();
@@ -102,17 +73,9 @@ async fn archive_with_single_empty_file() {
 }
 
 #[proptest(async = "tokio")]
-async fn any_archive(reader_and_data: zippity::proptest::ReaderAndData) {
-    let mut zippity = pin!(reader_and_data.reader);
-    let content = reader_and_data.data;
-    let size = zippity.size();
-
-    let mut buf = Vec::new();
-    zippity.read_to_end(&mut buf).await.unwrap();
-
-    assert!(size == (buf.len() as u64));
-
-    let mut unpacked = ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip");
+async fn any_archive(content: TestEntryData) {
+    let builder = content.clone().into();
+    let mut unpacked = build_and_open(builder).await;
     assert!(unpacked.len() == content.0.len());
 
     let mut unpacked_content: IndexMap<String, Bytes> = IndexMap::new();
@@ -139,11 +102,7 @@ async fn entry_ordering(entry_names: HashSet<String>) {
         builder.add_entry(name.clone(), ()).await.unwrap();
     }
 
-    let mut zippity = pin!(builder.build());
-    let mut buf = Vec::new();
-    zippity.read_to_end(&mut buf).await.unwrap();
-
-    let mut unpacked = ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip");
+    let mut unpacked = build_and_open(builder).await;
 
     let unpacked_entries: Vec<_> = (0..unpacked.len())
         .map(|i| {
@@ -153,4 +112,15 @@ async fn entry_ordering(entry_names: HashSet<String>) {
         .collect();
 
     assert!(unpacked_entries == entry_names);
+}
+
+async fn build_and_open<T: EntryData>(builder: Builder<T>) -> ZipArchive<std::io::Cursor<Vec<u8>>> {
+    let mut zippity = pin!(builder.build());
+    let size = zippity.size();
+
+    let mut buf = Vec::new();
+    zippity.read_to_end(&mut buf).await.unwrap();
+
+    assert!(size == (buf.len() as u64));
+    ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip")
 }
