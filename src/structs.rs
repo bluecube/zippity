@@ -1,4 +1,5 @@
 #![allow(clippy::unreadable_literal)]
+
 use packed_struct::prelude::*;
 
 /// Local file header
@@ -13,8 +14,8 @@ pub struct LocalFileHeader {
     pub flags: GpBitFlag,
     #[packed_field(size_bytes = "2", ty = "enum")]
     pub compression: Compression,
-    pub last_mod_time: u16,
-    pub last_mod_date: u16,
+    #[packed_field(size_bytes = "4")]
+    pub last_mod_datetime: DosDatetime,
     pub crc32: u32,
     pub compressed_size: u32,
     pub uncompressed_size: u32,
@@ -85,8 +86,8 @@ pub struct CentralDirectoryHeader {
     pub flags: GpBitFlag,
     #[packed_field(size_bytes = "2", ty = "enum")]
     pub compression: Compression,
-    pub last_mod_time: u16,
-    pub last_mod_date: u16,
+    #[packed_field(size_bytes = "4")]
+    pub last_mod_datetime: DosDatetime,
     pub crc32: u32,
     pub compressed_size: u32,
     pub uncompressed_size: u32,
@@ -173,6 +174,49 @@ pub enum Compression {
     Store = 0,
 }
 
+#[derive(Copy, Clone, Debug, Default, PackedStruct)]
+#[packed_struct(endian = "lsb", size_bytes = "4")]
+pub struct DosDatetime {
+    time: u16,
+    date: u16,
+}
+
+impl DosDatetime {
+    /// Constructs a new DosDateTime. Returns any value is out of range.
+    pub(crate) fn new(
+        year: u16,
+        month: u8,
+        day: u8,
+        hour: u8,
+        minute: u8,
+        second: u8,
+    ) -> Option<Self> {
+        if !(1980..(1980 + 128)).contains(&year) {
+            return None;
+        }
+        if !(1..=12).contains(&month) {
+            return None;
+        }
+        if !(1..=31).contains(&day) {
+            return None;
+        }
+        if hour > 23 {
+            return None;
+        }
+        if minute > 59 {
+            return None;
+        }
+        if second > 59 {
+            return None;
+        }
+
+        Some(DosDatetime {
+            time: (second / 2) as u16 | ((minute as u16) << 5) | ((hour as u16) << 11),
+            date: day as u16 | ((month as u16) << 5) | ((year - 1980) << 9),
+        })
+    }
+}
+
 pub trait PackedStructZippityExt {
     fn packed_size() -> u64;
     fn packed_size_usize() -> usize;
@@ -192,5 +236,77 @@ impl<T: PackedStruct> PackedStructZippityExt for T {
         Self::packed_size_usize()
             .try_into()
             .expect("The struct is small")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DosDatetime;
+    use assert2::assert;
+
+    #[test]
+    fn valid_dosdatetime_creation() {
+        // Test a valid DosDatetime creation within valid ranges
+        let dt = DosDatetime::new(1985, 12, 25, 14, 30, 28);
+        assert!(dt.is_some());
+    }
+
+    #[test]
+    fn invalid_year_lower_bound() {
+        // Year is below 1980
+        let dt = DosDatetime::new(1979, 5, 10, 10, 20, 20);
+        assert!(dt.is_none());
+    }
+
+    #[test]
+    fn invalid_year_upper_bound() {
+        // Year is above 2107 (1980 + 127)
+        let dt = DosDatetime::new(2108, 5, 10, 10, 20, 20);
+        assert!(dt.is_none());
+    }
+
+    #[test]
+    fn invalid_month() {
+        // Month is out of range (valid range is 1-12)
+        let dt = DosDatetime::new(2000, 13, 10, 10, 20, 20);
+        assert!(dt.is_none());
+    }
+
+    #[test]
+    fn invalid_day() {
+        // Day is out of range (valid range is 1-31)
+        let dt = DosDatetime::new(2000, 5, 32, 10, 20, 20);
+        assert!(dt.is_none());
+    }
+
+    #[test]
+    fn invalid_hour() {
+        // Hour is out of range (valid range is 0-23)
+        let dt = DosDatetime::new(2000, 5, 10, 24, 20, 20);
+        assert!(dt.is_none());
+    }
+
+    #[test]
+    fn invalid_minute() {
+        // Minute is out of range (valid range is 0-59)
+        let dt = DosDatetime::new(2000, 5, 10, 10, 60, 20);
+        assert!(dt.is_none());
+    }
+
+    #[test]
+    fn invalid_second() {
+        // Second is out of range (valid range is 0-59)
+        let dt = DosDatetime::new(2000, 5, 10, 10, 20, 60);
+        assert!(dt.is_none());
+    }
+
+    #[test]
+    fn even_second_rounding() {
+        // Test that odd seconds round down to even
+        let dt = DosDatetime::new(2000, 5, 10, 10, 20, 31);
+        assert!(dt.is_some());
+        let datetime = dt.unwrap();
+        // Check that the seconds were rounded down to 30
+        assert!(datetime.time & 0b11111 == 15); // 15 represents 30 seconds (rounded down)
     }
 }

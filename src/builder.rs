@@ -11,6 +11,7 @@ use crate::{
 pub struct BuilderEntry<D> {
     data: D,
     crc32: Option<u32>,
+    datetime: Option<structs::DosDatetime>,
     data_size: u64,
 }
 
@@ -26,6 +27,41 @@ impl<D: EntryData> BuilderEntry<D> {
     /// it was calculated in the `[Reader]`.
     pub fn crc32(&mut self, crc32: u32) -> &mut Self {
         self.crc32 = Some(crc32);
+        self
+    }
+
+    /// Sets the last modification date and time of the entry.
+    /// Returns None if the date is out of the representable range (1980-1-1 to 2107-12-31)
+    /// Note that only even seconds can be stored and the value will get rounded down.
+    pub fn datetime(
+        &mut self,
+        year: u16,
+        month: u8,
+        day: u8,
+        hour: u8,
+        minute: u8,
+        second: u8,
+    ) -> Option<&mut Self> {
+        self.datetime = Some(structs::DosDatetime::new(
+            year, month, day, hour, minute, second,
+        )?);
+        Some(self)
+    }
+
+    /// Sets the last modification date and time of the entry.
+    /// If the date is out of the representable range (1980-1-1 to 2107-12-31), this method
+    /// ignores the error and continues a default value (1980-1-1T00:00:00).
+    /// Note that only even seconds can be stored and the value will get rounded down.
+    pub fn datetime_or_default(
+        &mut self,
+        year: u16,
+        month: u8,
+        day: u8,
+        hour: u8,
+        minute: u8,
+        second: u8,
+    ) -> &mut Self {
+        self.datetime = structs::DosDatetime::new(year, month, day, hour, minute, second);
         self
     }
 
@@ -99,6 +135,7 @@ impl<D: EntryData> Builder<D> {
         let inserted = map_vacant_entry.insert(BuilderEntry {
             data,
             crc32: None,
+            datetime: None,
             data_size: size,
         });
         Ok(inserted)
@@ -119,6 +156,7 @@ impl<D: EntryData> Builder<D> {
                     entry.data,
                     offset_before_entry,
                     entry.crc32,
+                    entry.datetime.unwrap_or_default(),
                     entry.data_size,
                 ));
             }
@@ -242,5 +280,16 @@ mod test {
             .add_entry_with_size("x".into(), d.as_ref(), some_other_size)
             .unwrap();
         assert!(be.data_size == some_other_size);
+    }
+
+    #[test]
+    fn datetime_default_works() {
+        let mut builder = Builder::<()>::new();
+        builder
+            .add_entry_with_size("X".into(), (), 0)
+            .unwrap()
+            .datetime_or_default(3000, 1, 1, 1, 1, 1);
+
+        assert!(builder.entries["X"].datetime.is_none());
     }
 }

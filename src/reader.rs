@@ -24,17 +24,26 @@ pub(crate) struct ReaderEntry<D: EntryData> {
     /// Offset of the entry's local header (first mention in the output) in the file
     offset: u64,
     crc32: Option<u32>,
+    datetime: structs::DosDatetime,
     /// Number of bytes of the entry data, cached from EntryData::size()
     size: u64,
 }
 
 impl<D: EntryData> ReaderEntry<D> {
-    pub(crate) fn new(name: String, data: D, offset: u64, crc32: Option<u32>, size: u64) -> Self {
+    pub(crate) fn new(
+        name: String,
+        data: D,
+        offset: u64,
+        crc32: Option<u32>,
+        datetime: structs::DosDatetime,
+        size: u64,
+    ) -> Self {
         Self {
             name,
             data,
             offset,
             crc32,
+            datetime,
             size,
         }
     }
@@ -423,8 +432,7 @@ impl ReadState {
                     language_encoding: true,
                 },
                 compression: structs::Compression::Store,
-                last_mod_time: 0, // TODO
-                last_mod_date: 0, // TODO
+                last_mod_datetime: entry.datetime,
                 crc32: 0,
                 compressed_size: u32::MAX,
                 uncompressed_size: u32::MAX,
@@ -590,8 +598,7 @@ impl ReadState {
                     language_encoding: true,
                 },
                 compression: structs::Compression::Store,
-                last_mod_time: 0, // TODO
-                last_mod_date: 0, // TODO
+                last_mod_datetime: entry.datetime,
                 crc32,
                 compressed_size: u32::MAX,
                 uncompressed_size: u32::MAX,
@@ -604,7 +611,7 @@ impl ReadState {
                 file_comment_length: 0,
                 disk_number_start: 0,
                 internal_attributes: 0,
-                external_attributes: 0,
+                external_attributes: 0, // TODO
                 local_header_offset: u32::MAX,
             },
             output,

@@ -1,5 +1,6 @@
 use std::{collections::HashSet, pin::pin};
 
+use assert2::assert;
 use bytes::Bytes;
 use indexmap::IndexMap;
 use test_strategy::proptest;
@@ -112,6 +113,38 @@ async fn entry_ordering(entry_names: HashSet<String>) {
         .collect();
 
     assert!(unpacked_entries == entry_names);
+}
+
+#[proptest(async = "tokio")]
+async fn file_modification_time(
+    #[strategy(1980u16..=2107u16)] year: u16,
+    #[strategy(1u8..=12u8)] month: u8,
+    #[strategy(1u8..=31u8)] day: u8,
+    #[strategy(0u8..=23u8)] hour: u8,
+    #[strategy(0u8..=59u8)] minute: u8,
+    #[strategy(0u8..=59u8)] second: u8,
+) {
+    let mut builder: Builder<()> = Builder::new();
+
+    builder
+        .add_entry("X".into(), ())
+        .await
+        .unwrap()
+        .datetime(year, month, day, hour, minute, second)
+        .unwrap();
+
+    let mut unpacked = build_and_open(builder).await;
+
+    assert!(unpacked.len() == 1);
+
+    let unpacked_timestamp = unpacked.by_index(0).unwrap().last_modified();
+
+    assert!(unpacked_timestamp.year() == year);
+    assert!(unpacked_timestamp.month() == month);
+    assert!(unpacked_timestamp.day() == day);
+    assert!(unpacked_timestamp.hour() == hour);
+    assert!(unpacked_timestamp.minute() == minute);
+    assert!(unpacked_timestamp.second() == second & !1);
 }
 
 async fn build_and_open<T: EntryData>(builder: Builder<T>) -> ZipArchive<std::io::Cursor<Vec<u8>>> {
