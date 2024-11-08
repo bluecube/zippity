@@ -48,7 +48,7 @@ impl<D: EntryData> Stream for BytesStream<D> {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let projected = self.project();
 
-        assert!(projected.buffer.len() == 0);
+        assert!(projected.buffer.is_empty());
         assert!(projected.buffer.capacity() > 0);
 
         let n: u64 =
