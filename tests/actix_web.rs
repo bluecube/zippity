@@ -25,14 +25,14 @@ struct TestApp {
 async fn download_zip_no_callback(data: web::Data<TestApp>) -> impl Responder {
     let app = Arc::clone(data.deref());
     let builder: Builder<_> = app.entry_data.clone().into();
-    let reader = builder.build().unwrap();
+    let reader = builder.build();
     reader.into_responder()
 }
 
 async fn download_zip_yes_callback(data: web::Data<TestApp>) -> impl Responder {
     let app = Arc::clone(data.deref());
     let builder: Builder<_> = app.entry_data.clone().into();
-    let reader = builder.build().unwrap();
+    let reader = builder.build();
 
     async fn callback(app: Arc<TestApp>) {
         let mut locked = app.callback_counter.lock().await;
