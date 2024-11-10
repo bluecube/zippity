@@ -17,11 +17,12 @@ use std::{
     task::{ready, Context, Poll},
 };
 
+pub type ActixWebAdapterWithoutCallback<D> =
+    ActixWebAdapter<D, fn(Reader<D>) -> std::future::Ready<()>, std::future::Ready<()>>;
+
 impl<D: EntryData> Reader<D> {
     /// Wraps this reader into a struct that can be used as a return value from an Actix-web handler.
-    pub fn into_responder(
-        self,
-    ) -> ActixWebAdapter<D, fn(Reader<D>) -> std::future::Ready<()>, std::future::Ready<()>> {
+    pub fn into_responder(self) -> ActixWebAdapterWithoutCallback<D> {
         ActixWebAdapter {
             inner: BytesStreamAndCallback {
                 bytes_stream: self.into_bytes_stream(),
