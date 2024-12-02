@@ -35,12 +35,12 @@ impl<D: EntryData> BuilderEntry<D> {
     /// Note that only even seconds can be stored and the value will get rounded down.
     pub fn datetime(
         &mut self,
-        year: u16,
-        month: u8,
-        day: u8,
-        hour: u8,
-        minute: u8,
-        second: u8,
+        year: i32,
+        month: u32,
+        day: u32,
+        hour: u32,
+        minute: u32,
+        second: u32,
     ) -> Option<&mut Self> {
         self.datetime = Some(structs::DosDatetime::new(
             year, month, day, hour, minute, second,
@@ -54,12 +54,12 @@ impl<D: EntryData> BuilderEntry<D> {
     /// Note that only even seconds can be stored and the value will get rounded down.
     pub fn datetime_or_default(
         &mut self,
-        year: u16,
-        month: u8,
-        day: u8,
-        hour: u8,
-        minute: u8,
-        second: u8,
+        year: i32,
+        month: u32,
+        day: u32,
+        hour: u32,
+        minute: u32,
+        second: u32,
     ) -> &mut Self {
         self.datetime = structs::DosDatetime::new(year, month, day, hour, minute, second);
         self

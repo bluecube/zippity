@@ -184,12 +184,12 @@ pub struct DosDatetime {
 impl DosDatetime {
     /// Constructs a new DosDateTime. Returns any value is out of range.
     pub(crate) fn new(
-        year: u16,
-        month: u8,
-        day: u8,
-        hour: u8,
-        minute: u8,
-        second: u8,
+        year: i32,
+        month: u32,
+        day: u32,
+        hour: u32,
+        minute: u32,
+        second: u32,
     ) -> Option<Self> {
         if !(1980..(1980 + 128)).contains(&year) {
             return None;
@@ -212,7 +212,7 @@ impl DosDatetime {
 
         Some(DosDatetime {
             time: (second / 2) as u16 | ((minute as u16) << 5) | ((hour as u16) << 11),
-            date: day as u16 | ((month as u16) << 5) | ((year - 1980) << 9),
+            date: day as u16 | ((month as u16) << 5) | (((year - 1980) << 9) as u16),
         })
     }
 }
