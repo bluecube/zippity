@@ -1,9 +1,13 @@
 use std::{
-    future::{Future, Ready},
+    future::{ready, Future, Ready},
     io::{Cursor, Result},
+    pin::Pin,
+    task::{ready, Context, Poll},
 };
 
-use tokio::io::{AsyncRead, AsyncSeek};
+use pin_project::pin_project;
+use tokio::io::{empty, AsyncRead, AsyncSeek, Empty};
+use tokio_util::either::Either;
 
 pub trait EntryData {
     type Reader: AsyncRead + AsyncSeek;
@@ -21,16 +25,16 @@ pub trait EntrySize {
 }
 
 impl EntryData for () {
-    type Reader = std::io::Cursor<&'static [u8]>;
-    type Future = std::future::Ready<Result<Self::Reader>>;
+    type Reader = Empty;
+    type Future = Ready<Result<Self::Reader>>;
 
     fn get_reader(&self) -> Self::Future {
-        std::future::ready(Ok(std::io::Cursor::new(&[])))
+        std::future::ready(Ok(empty()))
     }
 }
 
 impl EntrySize for () {
-    type Future = std::future::Ready<Result<u64>>;
+    type Future = Ready<Result<u64>>;
 
     fn size(&self) -> Self::Future {
         std::future::ready(Ok(0))
@@ -54,16 +58,41 @@ impl<'a> EntrySize for &'a [u8] {
     }
 }
 
-// impl<T: AsRef<U>, U: EntryData> EntryData for T {
-//     type SizeFuture = U::SizeFuture;
-//     type Reader = U::Reader;
-//     type ReaderFuture = U::ReaderFuture;
+#[cfg(test)]
+mod tests {
+    use std::pin::pin;
 
-//     fn size(&self) -> Self::SizeFuture {
-//         self.as_ref().size()
-//     }
+    use assert2::assert;
 
-//     fn get_reader(&self) -> Self::ReaderFuture {
-//         self.as_ref().get_reader()
-//     }
-// }
+    use crate::test_util::{measure_size, read_to_vec};
+
+    use super::{EntryData, EntrySize};
+
+    pub(crate) async fn check_size_matches<T: EntryData + EntrySize>(entry: &T) -> u64 {
+        let reader = pin!(entry.get_reader().await.unwrap());
+        let expected_size = entry.size().await.unwrap();
+        let actual_size = measure_size(reader).await.unwrap();
+
+        assert!(actual_size == expected_size);
+
+        actual_size
+    }
+
+    #[tokio::test]
+    async fn empty_entry() {
+        let size = check_size_matches(&()).await;
+        assert!(size == 0);
+    }
+
+    #[tokio::test]
+    async fn slice_entry() {
+        let entry = b"23456789sdfghjk,".as_slice();
+
+        check_size_matches(&entry).await;
+
+        let reader = pin!(entry.get_reader().await.unwrap());
+        let read_back = read_to_vec(reader, 1024).await.unwrap();
+
+        assert!(read_back.as_slice() == entry);
+    }
+}
