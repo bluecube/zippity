@@ -1314,12 +1314,10 @@ mod test {
                 "Big file".to_owned(),
                 funky_entry_data::Zeros::new(0x100000000),
             )
-            .await
             .unwrap();
         for i in 0..0xffff {
             builder
                 .add_entry(format!("Empty file {}", i), funky_entry_data::Zeros::new(0))
-                .await
                 .unwrap();
         }
         let zippity = pin!(builder.build());
@@ -1343,11 +1341,9 @@ mod test {
         for (name, value) in content.0.iter() {
             builder_slice
                 .add_entry(name.clone(), value.as_ref())
-                .await
                 .unwrap();
             builder_lazy
                 .add_entry(name.clone(), value.as_ref())
-                .await
                 .unwrap();
         }
 
@@ -1559,7 +1555,6 @@ mod test {
                     actual_size: 10,
                 },
             )
-            .await
             .unwrap();
 
         let zippity = pin!(builder.build());
@@ -1584,7 +1579,6 @@ mod test {
                         actual_size,
                     },
                 )
-                .await
                 .unwrap();
 
             let mut zippity = pin!(builder.build());
@@ -1636,7 +1630,7 @@ mod test {
         /// to the `Chunk` design of the reader.
         async fn test_internal(test_data: &[u8], pre_fill_crc: bool, seek_past_data: bool) {
             let mut builder1 = Builder::<funky_entry_data::LazyReader>::new();
-            builder1.add_entry("X".to_owned(), test_data).await.unwrap();
+            builder1.add_entry("X".to_owned(), test_data).unwrap();
 
             let mut reader1 = pin!(builder1.build());
             let whole_zip = read_to_vec(reader1.as_mut(), 8192).await.unwrap();
@@ -1653,7 +1647,7 @@ mod test {
             };
 
             let mut builder2 = Builder::<funky_entry_data::LazyReader>::new();
-            let entry = builder2.add_entry("X".to_owned(), test_data).await.unwrap();
+            let entry = builder2.add_entry("X".to_owned(), test_data).unwrap();
             if pre_fill_crc {
                 entry.crc32(entry_crc);
             }
@@ -1710,15 +1704,12 @@ mod test {
         let mut builder = Builder::<funky_entry_data::EmptyUnsupportedReader>::new();
         builder
             .add_entry("abc".into(), funky_entry_data::EmptyUnsupportedReader())
-            .await
             .unwrap();
         builder
             .add_entry("def".into(), funky_entry_data::EmptyUnsupportedReader())
-            .await
             .unwrap();
         builder
             .add_entry("ghi".into(), funky_entry_data::EmptyUnsupportedReader())
-            .await
             .unwrap();
 
         let zippity = pin!(builder.build());
@@ -1732,7 +1723,6 @@ mod test {
         let mut builder = Builder::<&[u8]>::new();
         builder
             .add_entry("x".into(), b"x".as_slice())
-            .await
             .unwrap()
             .crc32(0); // Passing in a wrong CRC
 

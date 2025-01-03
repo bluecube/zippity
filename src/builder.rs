@@ -1,7 +1,7 @@
 use indexmap::IndexMap;
 
 use crate::{
-    entry_data::{EntryData, EntrySize},
+    entry_data::EntryData,
     reader::{Reader, ReaderEntry, Sizes},
     structs::{self, PackedStructZippityExt},
     Error,
@@ -105,18 +105,13 @@ impl<D: EntryData> Builder<D> {
     /// Adds an entry to the zip file.
     /// The returned reference can be used to add metadata to the entry.
     ///
-    /// This variant of adding the entry does not requrire EntrySize to be implemented, or can
-    /// be used if the size is known ahead of time from some other source.
-    /// Providing a wrong value will be detected in some cases while reading the zip, but generally
-    /// it will lead to a damaged zip file.
-    ///
     /// # Errors
-    /// Will return an error if `name` is longer than `u16::MAX` (limitation of Zip format)
-    pub fn add_entry_with_size<T: Into<D>>(
+    /// Will return an error if `name` is longer than `u16::MAX` (limitation of Zip format),
+    /// or the given entry name is already present in the archive.
+    pub fn add_entry<T: Into<D>>(
         &mut self,
         name: String,
         data: T,
-        size: u64,
     ) -> std::result::Result<&mut BuilderEntry<D>, Error> {
         use indexmap::map::Entry;
         if u16::try_from(name.len()).is_err() {
@@ -132,11 +127,12 @@ impl<D: EntryData> Builder<D> {
         };
 
         let data = data.into();
+        let data_size = data.size();
         let inserted = map_vacant_entry.insert(BuilderEntry {
             data,
             crc32: None,
             datetime: None,
-            data_size: size,
+            data_size,
         });
         Ok(inserted)
     }
@@ -182,22 +178,6 @@ impl<D: EntryData> Builder<D> {
     }
 }
 
-impl<D: EntryData + EntrySize> Builder<D> {
-    /// Adds an entry to the zip file.
-    /// The returned reference can be used to add metadata to the entry.
-    /// # Errors
-    /// Will return an error if `name` is longer than `u16::MAX` (limitation of Zip format)
-    pub async fn add_entry<T: Into<D>>(
-        &mut self,
-        name: String,
-        data: T,
-    ) -> std::result::Result<&mut BuilderEntry<D>, Error> {
-        let data = data.into();
-        let size = data.size().await?;
-        self.add_entry_with_size(name, data, size)
-    }
-}
-
 #[cfg(test)]
 mod test {
     use crate::proptest::TestEntryData;
@@ -216,10 +196,7 @@ mod test {
         let mut builder: Builder<()> = Builder::new();
 
         let name_length = u16::MAX as usize + 1;
-        let e = builder
-            .add_entry("X".repeat(name_length), ())
-            .await
-            .unwrap_err();
+        let e = builder.add_entry("X".repeat(name_length), ()).unwrap_err();
         assert_matches!(e, Error::TooLongEntryName { entry_name } if entry_name.len() == name_length);
     }
 
@@ -269,24 +246,15 @@ mod test {
     #[proptest(async = "tokio")]
     async fn add_entry_stores_size_correctly(d: Vec<u8>) {
         let mut builder = Builder::<&[u8]>::new();
-        let be = builder.add_entry("x".into(), d.as_ref()).await.unwrap();
+        let be = builder.add_entry("x".into(), d.as_ref()).unwrap();
         assert!(be.data_size == d.len() as u64);
-    }
-
-    #[proptest(async = "tokio")]
-    async fn add_entry_with_size_stores_size_correctly(d: Vec<u8>, some_other_size: u64) {
-        let mut builder = Builder::<&[u8]>::new();
-        let be = builder
-            .add_entry_with_size("x".into(), d.as_ref(), some_other_size)
-            .unwrap();
-        assert!(be.data_size == some_other_size);
     }
 
     #[test]
     fn datetime_default_works() {
         let mut builder = Builder::<()>::new();
         builder
-            .add_entry_with_size("X".into(), (), 0)
+            .add_entry("X".into(), ())
             .unwrap()
             .datetime_or_default(3000, 1, 1, 1, 1, 1);
 

@@ -34,7 +34,7 @@ tokio_test::block_on(async {
 let mut builder = zippity::Builder::<&[u8]>::new();
 
 // Add data
-builder.add_entry("Entry name".to_owned(), b"Entry data".as_slice()).await.unwrap();
+builder.add_entry("Entry name".to_owned(), b"Entry data".as_slice()).unwrap();
 
 // Build the reader object
 // Note that this does not touch the data yet.

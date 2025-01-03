@@ -31,9 +31,8 @@ async fn read_slice_of_tokio_file_based_zip(
 
         builder_slices
             .add_entry(name.clone(), value.as_ref())
-            .await
             .unwrap();
-        builder_files.add_entry(name.clone(), path).await.unwrap();
+        builder_files.add_entry(name.clone(), path).unwrap();
     }
 
     let mut zippity_slices = pin!(builder_slices.build());

@@ -24,7 +24,7 @@ pub mod proptest;
 mod test_util;
 
 pub use builder::{Builder, BuilderEntry};
-pub use entry_data::{EntryData, EntrySize};
+pub use entry_data::EntryData;
 pub use reader::Reader;
 
 #[cfg(feature = "tokio-file")]
@@ -53,8 +53,6 @@ pub enum Error {
     },
     #[error("Attempting to seek before the start of the file")]
     SeekingBeforeStart,
-    #[error("Error getting entry size")]
-    GettingEntrySize(#[from] std::io::Error),
 }
 
 impl From<Error> for std::io::Error {

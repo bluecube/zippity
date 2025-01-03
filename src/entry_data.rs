@@ -1,5 +1,5 @@
 use std::{
-    future::{ready, Future, Ready},
+    future::{Future, Ready},
     io::{Cursor, Result},
     pin::Pin,
     task::{ready, Context, Poll},
@@ -15,13 +15,10 @@ pub trait EntryData {
 
     /// Returns a future that when awaited will provide the reader for file data.
     fn get_reader(&self) -> Self::Future;
-}
-
-pub trait EntrySize {
-    type Future: Future<Output = Result<u64>>;
 
     /// Returns the size of the data of the entry, that will be read through get_reader.
-    fn size(&self) -> Self::Future;
+    /// This is allowed to
+    fn size(&self) -> u64;
 }
 
 impl EntryData for () {
@@ -31,13 +28,9 @@ impl EntryData for () {
     fn get_reader(&self) -> Self::Future {
         std::future::ready(Ok(empty()))
     }
-}
 
-impl EntrySize for () {
-    type Future = Ready<Result<u64>>;
-
-    fn size(&self) -> Self::Future {
-        std::future::ready(Ok(0))
+    fn size(&self) -> u64 {
+        0
     }
 }
 
@@ -48,13 +41,47 @@ impl<'a> EntryData for &'a [u8] {
     fn get_reader(&self) -> Self::Future {
         std::future::ready(Ok(Cursor::new(self)))
     }
+
+    fn size(&self) -> u64 {
+        self.len() as u64
+    }
 }
 
-impl<'a> EntrySize for &'a [u8] {
-    type Future = Ready<Result<u64>>;
+impl<T: EntryData> EntryData for Option<T> {
+    type Reader = Either<T::Reader, Empty>;
+    type Future = OptionEntryDataFuture<T>;
 
-    fn size(&self) -> Self::Future {
-        std::future::ready(Ok(self.len() as u64))
+    fn get_reader(&self) -> Self::Future {
+        OptionEntryDataFuture {
+            inner: self.as_ref().map(|ed| ed.get_reader()),
+        }
+    }
+
+    fn size(&self) -> u64 {
+        match self {
+            Some(entry) => entry.size(),
+            None => 0,
+        }
+    }
+}
+
+#[pin_project]
+pub struct OptionEntryDataFuture<T: EntryData> {
+    #[pin]
+    inner: Option<T::Future>,
+}
+
+impl<T: EntryData> Future for OptionEntryDataFuture<T> {
+    type Output = Result<Either<T::Reader, Empty>>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.project().inner.as_pin_mut() {
+            Some(inner) => {
+                let reader_result = ready!(inner.poll(cx))?;
+                Poll::Ready(Ok(Either::Left(reader_result)))
+            }
+            None => Poll::Ready(Ok(Either::Right(empty()))),
+        }
     }
 }
 
@@ -66,11 +93,11 @@ mod tests {
 
     use crate::test_util::{measure_size, read_to_vec};
 
-    use super::{EntryData, EntrySize};
+    use super::EntryData;
 
-    pub(crate) async fn check_size_matches<T: EntryData + EntrySize>(entry: &T) -> u64 {
+    pub(crate) async fn check_size_matches<T: EntryData>(entry: &T) -> u64 {
         let reader = pin!(entry.get_reader().await.unwrap());
-        let expected_size = entry.size().await.unwrap();
+        let expected_size = entry.size();
         let actual_size = measure_size(reader).await.unwrap();
 
         assert!(actual_size == expected_size);
@@ -94,5 +121,24 @@ mod tests {
         let read_back = read_to_vec(reader, 1024).await.unwrap();
 
         assert!(read_back.as_slice() == entry);
+    }
+
+    #[tokio::test]
+    async fn option_entry_none() {
+        let size = check_size_matches::<Option<&[u8]>>(&None).await;
+        assert!(size == 0);
+    }
+
+    #[tokio::test]
+    async fn option_entry_some() {
+        let value = b"23456789sdfghjk,".as_slice();
+        let entry = Some(value);
+
+        check_size_matches(&entry).await;
+
+        let reader = pin!(entry.get_reader().await.unwrap());
+        let read_back = read_to_vec(reader, 1024).await.unwrap();
+
+        assert!(read_back.as_slice() == value);
     }
 }

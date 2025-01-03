@@ -10,11 +10,7 @@ use futures_util::Stream;
 use pin_project::pin_project;
 use tokio_util::io::poll_read_buf;
 
-use crate::{
-    entry_data::{EntryData, EntrySize},
-    reader::READ_SIZE,
-    Reader,
-};
+use crate::{entry_data::EntryData, reader::READ_SIZE, Reader};
 
 impl EntryData for Bytes {
     type Reader = Cursor<Bytes>;
@@ -23,13 +19,9 @@ impl EntryData for Bytes {
     fn get_reader(&self) -> Self::Future {
         std::future::ready(Ok(Cursor::new(self.clone())))
     }
-}
 
-impl EntrySize for Bytes {
-    type Future = Ready<Result<u64>>;
-
-    fn size(&self) -> Self::Future {
-        std::future::ready(Ok(self.len() as u64))
+    fn size(&self) -> u64 {
+        self.len() as u64
     }
 }
 
@@ -128,11 +120,9 @@ mod test {
         for (name, value) in content.0.iter() {
             builder_slice
                 .add_entry(name.clone(), value.as_ref())
-                .await
                 .unwrap();
             builder_bytes
                 .add_entry(name.clone(), value.clone())
-                .await
                 .unwrap();
         }
 
@@ -152,10 +142,7 @@ mod test {
     ) {
         let mut builder: Builder<Bytes> = Builder::new();
         for (name, value) in content.0.iter() {
-            builder
-                .add_entry(name.clone(), value.clone())
-                .await
-                .unwrap();
+            builder.add_entry(name.clone(), value.clone()).unwrap();
         }
 
         let bytes_stream = pin!(builder.clone().build().into_bytes_stream());

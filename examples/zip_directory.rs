@@ -39,7 +39,6 @@ fn gather_metadata(directory: &Path) -> std::io::Result<Builder<TokioFileEntry>>
             continue;
         }
 
-        let metadata = entry.metadata()?;
         let path = entry.into_path();
         let entry_name = path
             .strip_prefix(directory)
@@ -47,7 +46,7 @@ fn gather_metadata(directory: &Path) -> std::io::Result<Builder<TokioFileEntry>>
             .to_string_lossy()
             .into_owned();
 
-        builder.add_entry_with_size(entry_name, path, metadata.len())?;
+        builder.add_entry(entry_name, path)?;
     }
 
     Ok(builder)

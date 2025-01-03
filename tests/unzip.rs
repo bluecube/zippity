@@ -17,7 +17,7 @@ async fn empty_archive() {
 #[tokio::test]
 async fn empty_entry_name() {
     let mut builder: Builder<()> = Builder::new();
-    builder.add_entry(String::new(), ()).await.unwrap();
+    builder.add_entry(String::new(), ()).unwrap();
 
     let mut unpacked = build_and_open(builder).await;
     assert!(unpacked.len() == 1);
@@ -37,7 +37,6 @@ async fn archive_with_single_file() {
 
     builder
         .add_entry("Foo".to_owned(), b"bar!".as_slice())
-        .await
         .unwrap();
 
     let mut unpacked = build_and_open(builder).await;
@@ -56,10 +55,7 @@ async fn archive_with_single_file() {
 async fn archive_with_single_empty_file() {
     let mut builder: Builder<&[u8]> = Builder::new();
 
-    builder
-        .add_entry("0".to_owned(), b"".as_slice())
-        .await
-        .unwrap();
+    builder.add_entry("0".to_owned(), b"".as_slice()).unwrap();
 
     let mut unpacked = build_and_open(builder).await;
     assert!(unpacked.len() == 1);
@@ -100,7 +96,7 @@ async fn entry_ordering(entry_names: HashSet<String>) {
     let mut builder = Builder::<()>::new();
 
     for name in entry_names.iter() {
-        builder.add_entry(name.clone(), ()).await.unwrap();
+        builder.add_entry(name.clone(), ()).unwrap();
     }
 
     let mut unpacked = build_and_open(builder).await;
@@ -128,7 +124,6 @@ async fn file_modification_time(
 
     builder
         .add_entry("X".into(), ())
-        .await
         .unwrap()
         .datetime(year, month, day, hour, minute, second)
         .unwrap();

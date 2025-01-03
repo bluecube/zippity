@@ -158,7 +158,7 @@ impl From<TestEntryData> for Builder<Bytes> {
 
         value.0.into_iter().for_each(|(name, content)| {
             builder
-                .add_entry_with_size(name.clone(), content.clone(), content.len() as u64)
+                .add_entry(name.clone(), content.clone())
                 .expect("Adding entries from hash map should never fail");
         });
 

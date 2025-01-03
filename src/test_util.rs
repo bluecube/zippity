@@ -61,7 +61,7 @@ pub mod funky_entry_data {
     };
     use tokio::io::{AsyncRead, AsyncSeek};
 
-    use crate::entry_data::{EntryData, EntrySize};
+    use crate::entry_data::EntryData;
 
     /// Async readable that returns zeros.
     #[derive(Clone, Debug)]
@@ -122,13 +122,9 @@ pub mod funky_entry_data {
         fn get_reader(&self) -> Self::Future {
             std::future::ready(Ok(self.clone()))
         }
-    }
 
-    impl EntrySize for Zeros {
-        type Future = std::future::Ready<Result<u64>>;
-
-        fn size(&self) -> Self::Future {
-            std::future::ready(Ok(self.size))
+        fn size(&self) -> u64 {
+            self.size
         }
     }
 
@@ -241,17 +237,9 @@ pub mod funky_entry_data {
                 delay: true,
             }
         }
-    }
 
-    impl<'a> EntrySize for LazyReader<'a> {
-        type Future = LazyReaderSizeFuture;
-
-        fn size(&self) -> Self::Future {
-            let s = self.inner.get_ref().len() as u64;
-            LazyReaderSizeFuture {
-                size: s,
-                delay: true,
-            }
+        fn size(&self) -> u64 {
+            self.inner.get_ref().len() as u64
         }
     }
 
@@ -269,13 +257,9 @@ pub mod funky_entry_data {
         fn get_reader(&self) -> Self::Future {
             std::future::ready(Ok(Zeros::new(self.actual_size)))
         }
-    }
 
-    impl EntrySize for BadSize {
-        type Future = std::future::Ready<Result<u64>>;
-
-        fn size(&self) -> Self::Future {
-            std::future::ready(Ok(self.reported_size))
+        fn size(&self) -> u64 {
+            self.reported_size
         }
     }
 
@@ -289,13 +273,9 @@ pub mod funky_entry_data {
         fn get_reader(&self) -> Self::Future {
             unimplemented!("This test struct doesn't support getting futures")
         }
-    }
 
-    impl EntrySize for EmptyUnsupportedReader {
-        type Future = std::future::Ready<Result<u64>>;
-
-        fn size(&self) -> Self::Future {
-            std::future::ready(Ok(0))
+        fn size(&self) -> u64 {
+            0
         }
     }
 }

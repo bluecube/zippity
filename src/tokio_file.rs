@@ -1,7 +1,6 @@
-use crate::entry_data::{EntryData, EntrySize};
-use futures_util::future::TryFutureExt;
+use crate::entry_data::EntryData;
 use std::{future::Future, io::Result, path::PathBuf, pin::Pin};
-use tokio::fs::{metadata, File};
+use tokio::fs::File;
 
 pub struct TokioFileEntry(PathBuf);
 
@@ -29,13 +28,11 @@ impl EntryData for TokioFileEntry {
     fn get_reader(&self) -> Self::Future {
         Box::pin(File::open(self.0.clone()))
     }
-}
 
-impl EntrySize for TokioFileEntry {
-    type Future = Pin<Box<dyn Future<Output = Result<u64>>>>;
-
-    fn size(&self) -> Self::Future {
-        Box::pin(metadata(self.0.clone()).map_ok(|m| m.len()))
+    fn size(&self) -> u64 {
+        // TODO: The whole implementation is very ugly, but this whole file
+        // will be deleted in very near future
+        std::fs::metadata(self.0.clone()).unwrap().len()
     }
 }
 
@@ -57,7 +54,7 @@ mod test {
 
         let entry = TokioFileEntry::new(tempfile_name.to_path_buf());
 
-        assert!(entry.size().await.unwrap() == content.len() as u64);
+        assert!(entry.size() == content.len() as u64);
     }
 
     #[proptest(async = "tokio")]
