@@ -25,6 +25,7 @@ pub(crate) struct ReaderEntry<D: EntryData> {
     offset: u64,
     crc32: Option<u32>,
     datetime: structs::DosDatetime,
+    external_attributes: u32,
     /// Number of bytes of the entry data, cached from EntryData::size()
     size: u64,
 }
@@ -36,6 +37,7 @@ impl<D: EntryData> ReaderEntry<D> {
         offset: u64,
         crc32: Option<u32>,
         datetime: structs::DosDatetime,
+        external_attributes: u32,
         size: u64,
     ) -> Self {
         Self {
@@ -44,6 +46,7 @@ impl<D: EntryData> ReaderEntry<D> {
             offset,
             crc32,
             datetime,
+            external_attributes,
             size,
         }
     }
@@ -611,7 +614,7 @@ impl ReadState {
                 file_comment_length: 0,
                 disk_number_start: 0,
                 internal_attributes: 0,
-                external_attributes: 0, // TODO
+                external_attributes: entry.external_attributes,
                 local_header_offset: u32::MAX,
             },
             output,

@@ -12,6 +12,8 @@ pub struct BuilderEntry<D> {
     data: D,
     crc32: Option<u32>,
     datetime: Option<structs::DosDatetime>,
+    file_type: structs::unix_mode::FileType,
+    permissions: Option<u32>,
     data_size: u64,
 }
 
@@ -62,6 +64,37 @@ impl<D: EntryData> BuilderEntry<D> {
         second: u32,
     ) -> &mut Self {
         self.datetime = structs::DosDatetime::new(year, month, day, hour, minute, second);
+        self
+    }
+
+    /// Sets the entry to be a directory.
+    /// This is the default.
+    pub fn file(&mut self) -> &mut Self {
+        self.file_type = structs::unix_mode::FileType::File;
+        self
+    }
+
+    /// Sets the entry to be a directory.
+    /// This method only modifies the unix permissions, directory entries should contain no data
+    /// and the entry names should end with slash and, neither of which is enforced or
+    /// verified by zippity.
+    pub fn directory(&mut self) -> &mut Self {
+        self.file_type = structs::unix_mode::FileType::Directory;
+        self
+    }
+
+    /// Sets the entry to be a symlink.
+    /// Symlinks don't support setting permissions will ignore any value set.
+    pub fn symlink(&mut self) -> &mut Self {
+        self.file_type = structs::unix_mode::FileType::Symlink;
+        self
+    }
+
+    /// Sets the low 9 bits of unix permissions (with mask 0o777) of the entry.
+    /// If permissions are not set, default is 0o755 for directories and 0o644 for files.
+    /// Symlinks don't support setting permissions will ignore any value set.
+    pub fn unix_permissions(&mut self, permissions: u32) -> &mut Self {
+        self.permissions = Some(permissions & 0o777);
         self
     }
 
@@ -132,6 +165,8 @@ impl<D: EntryData> Builder<D> {
             data,
             crc32: None,
             datetime: None,
+            file_type: structs::unix_mode::FileType::File,
+            permissions: None,
             data_size,
         });
         Ok(inserted)
@@ -147,12 +182,16 @@ impl<D: EntryData> Builder<D> {
                 let offset_before_entry = offset;
                 offset += local_size;
                 cd_size += BuilderEntry::<D>::get_cd_header_size(&name);
+                let external_attributes =
+                    structs::unix_mode::get_external_attributes(entry.file_type, entry.permissions);
+
                 entries.push(ReaderEntry::new(
                     name,
                     entry.data,
                     offset_before_entry,
                     entry.crc32,
                     entry.datetime.unwrap_or_default(),
+                    external_attributes,
                     entry.data_size,
                 ));
             }
@@ -259,5 +298,16 @@ mod test {
             .datetime_or_default(3000, 1, 1, 1, 1, 1);
 
         assert!(builder.entries["X"].datetime.is_none());
+    }
+
+    #[test]
+    fn unix_permissions_masking() {
+        let mut builder = Builder::<()>::new();
+        builder
+            .add_entry("X".into(), ())
+            .unwrap()
+            .unix_permissions(0o123456);
+
+        assert!(builder.entries["X"].permissions == Some(0o456));
     }
 }

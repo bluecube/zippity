@@ -13,7 +13,7 @@ Library for asynchronously creating a ZIP file on the fly.
 - [X] Supports files on the filesystem as entries.
   - [ ] Supports tokio_uring
 - [X] Supports integration with Actix Web (see `[Reader::into_responder()]`)
-- [ ] Entry metadata
+- [X] Entry metadata
 
 ## Non-features
 These are not planned to be implemented.

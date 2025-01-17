@@ -239,6 +239,27 @@ impl<T: PackedStruct> PackedStructZippityExt for T {
     }
 }
 
+pub mod unix_mode {
+    #[derive(Clone, Debug)]
+    pub enum FileType {
+        File,
+        Directory,
+        Symlink,
+    }
+
+    /// Converts filetype and permissions to a value usable as external attributes of zip entry.
+    /// The file type controls both the top bits of the unix mode and the default permissions.
+    /// Symlinks have permissions always set to 0o777 and ignore the parameter.
+    pub fn get_external_attributes(file_type: FileType, permissions: Option<u32>) -> u32 {
+        let unix_mode = match file_type {
+            FileType::File => 0o100000 | permissions.unwrap_or(0o644),
+            FileType::Directory => 0o40000 | permissions.unwrap_or(0o755),
+            FileType::Symlink => 0o120777,
+        };
+        unix_mode << 16
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::DosDatetime;

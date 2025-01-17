@@ -142,6 +142,92 @@ async fn file_modification_time(
     assert!(unpacked_timestamp.second() == (second & !1) as u8);
 }
 
+#[tokio::test]
+async fn regular_file_default_permissions() {
+    let mut builder: Builder<()> = Builder::new();
+
+    builder.add_entry("X".into(), ()).unwrap();
+
+    let mut unpacked = build_and_open(builder).await;
+
+    assert!(unpacked.len() == 1);
+
+    let permissions = unpacked.by_index(0).unwrap().unix_mode().unwrap();
+
+    assert!(permissions == 0o100644);
+}
+
+#[tokio::test]
+async fn directory_default_permissions() {
+    let mut builder: Builder<()> = Builder::new();
+
+    builder.add_entry("X".into(), ()).unwrap().directory();
+
+    let mut unpacked = build_and_open(builder).await;
+
+    assert!(unpacked.len() == 1);
+
+    let permissions = unpacked.by_index(0).unwrap().unix_mode().unwrap();
+
+    assert!(permissions == 0o40755);
+}
+
+#[tokio::test]
+async fn regular_file_override_permissions() {
+    let mut builder: Builder<()> = Builder::new();
+
+    builder
+        .add_entry("X".into(), ())
+        .unwrap()
+        .unix_permissions(0o123);
+
+    let mut unpacked = build_and_open(builder).await;
+
+    assert!(unpacked.len() == 1);
+
+    let permissions = unpacked.by_index(0).unwrap().unix_mode().unwrap();
+
+    assert!(permissions == 0o100123);
+}
+
+#[tokio::test]
+async fn directory_override_permissions() {
+    let mut builder: Builder<()> = Builder::new();
+
+    builder
+        .add_entry("X".into(), ())
+        .unwrap()
+        .directory()
+        .unix_permissions(0o123);
+
+    let mut unpacked = build_and_open(builder).await;
+
+    assert!(unpacked.len() == 1);
+
+    let permissions = unpacked.by_index(0).unwrap().unix_mode().unwrap();
+
+    assert!(permissions == 0o40123);
+}
+
+#[tokio::test]
+async fn symlink_permissions() {
+    let mut builder: Builder<()> = Builder::new();
+
+    builder
+        .add_entry("X".into(), ())
+        .unwrap()
+        .symlink()
+        .unix_permissions(0o123); // Will get overridden
+
+    let mut unpacked = build_and_open(builder).await;
+
+    assert!(unpacked.len() == 1);
+
+    let permissions = unpacked.by_index(0).unwrap().unix_mode().unwrap();
+
+    assert!(permissions == 0o120777);
+}
+
 async fn build_and_open<T: EntryData>(builder: Builder<T>) -> ZipArchive<std::io::Cursor<Vec<u8>>> {
     let mut zippity = pin!(builder.build());
     let size = zippity.size();
