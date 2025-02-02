@@ -125,7 +125,7 @@ async fn file_modification_time(
     builder
         .add_entry("X".into(), ())
         .unwrap()
-        .datetime(year, month, day, hour, minute, second)
+        .datetime_fields(year, month, day, hour, minute, second)
         .unwrap();
 
     let mut unpacked = build_and_open(builder).await;

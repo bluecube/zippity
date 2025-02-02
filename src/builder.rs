@@ -35,7 +35,7 @@ impl<D: EntryData> BuilderEntry<D> {
     /// Sets the last modification date and time of the entry.
     /// Returns None if the date is out of the representable range (1980-1-1 to 2107-12-31)
     /// Note that only even seconds can be stored and the value will get rounded down.
-    pub fn datetime(
+    pub fn datetime_fields(
         &mut self,
         year: i32,
         month: u32,
@@ -54,7 +54,7 @@ impl<D: EntryData> BuilderEntry<D> {
     /// If the date is out of the representable range (1980-1-1 to 2107-12-31), this method
     /// ignores the error and continues a default value (1980-1-1T00:00:00).
     /// Note that only even seconds can be stored and the value will get rounded down.
-    pub fn datetime_or_default(
+    pub fn datetime_fields_or_default(
         &mut self,
         year: i32,
         month: u32,
@@ -295,7 +295,7 @@ mod test {
         builder
             .add_entry("X".into(), ())
             .unwrap()
-            .datetime_or_default(3000, 1, 1, 1, 1, 1);
+            .datetime_fields_or_default(3000, 1, 1, 1, 1, 1);
 
         assert!(builder.entries["X"].datetime.is_none());
     }
