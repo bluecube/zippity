@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc cecc2dce99e9c53d4fe1b790c14950edde4a50ef0752a9ad43df8c7ef3af3909 # shrinks to input = _LocalSizeMatchesChunksArgs { content: TestEntryData({"": b"\0"}) }

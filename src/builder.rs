@@ -14,7 +14,6 @@ pub struct BuilderEntry<D> {
     datetime: Option<structs::DosDatetime>,
     file_type: structs::unix_mode::FileType,
     permissions: Option<u32>,
-    data_size: u64,
 }
 
 impl<D: EntryData> BuilderEntry<D> {
@@ -98,13 +97,13 @@ impl<D: EntryData> BuilderEntry<D> {
         self
     }
 
-    fn get_local_size(&self, name: &str) -> u64 {
+    fn get_local_size(&self, name: &str, data_size: u64) -> u64 {
         let local_header = structs::LocalFileHeader::packed_size();
         let zip64_extra_data = structs::Zip64ExtraField::packed_size();
         let filename = name.len() as u64;
         let data_descriptor = structs::DataDescriptor64::packed_size();
 
-        local_header + zip64_extra_data + filename + self.data_size + data_descriptor
+        local_header + zip64_extra_data + filename + data_size + data_descriptor
     }
 
     fn get_cd_header_size(name: &str) -> u64 {
@@ -160,14 +159,12 @@ impl<D: EntryData> Builder<D> {
         };
 
         let data = data.into();
-        let data_size = data.size();
         let inserted = map_vacant_entry.insert(BuilderEntry {
             data,
             crc32: None,
             datetime: None,
             file_type: structs::unix_mode::FileType::File,
             permissions: None,
-            data_size,
         });
         Ok(inserted)
     }
@@ -178,7 +175,8 @@ impl<D: EntryData> Builder<D> {
         let entries = {
             let mut entries = Vec::with_capacity(self.entries.len());
             for (name, entry) in self.entries.into_iter() {
-                let local_size = entry.get_local_size(&name);
+                let entry_data_size = entry.data.size();
+                let local_size = entry.get_local_size(&name, entry_data_size);
                 let offset_before_entry = offset;
                 offset += local_size;
                 cd_size += BuilderEntry::<D>::get_cd_header_size(&name);
@@ -192,7 +190,7 @@ impl<D: EntryData> Builder<D> {
                     entry.crc32,
                     entry.datetime.unwrap_or_default(),
                     external_attributes,
-                    entry.data_size,
+                    entry_data_size,
                 ));
             }
             entries
@@ -251,7 +249,7 @@ mod test {
             let mut local_sizes = HashMap::with_capacity(builder.entries.len());
 
             for (k, v) in builder.entries.iter() {
-                local_sizes.insert(k.clone(), v.get_local_size(k));
+                local_sizes.insert(k.clone(), v.get_local_size(k, v.data.size()));
             }
 
             local_sizes
@@ -280,13 +278,6 @@ mod test {
 
             assert!(local_sizes[entries[i].get_name()] == entry_local_size);
         }
-    }
-
-    #[proptest(async = "tokio")]
-    async fn add_entry_stores_size_correctly(d: Vec<u8>) {
-        let mut builder = Builder::<&[u8]>::new();
-        let be = builder.add_entry("x".into(), d.as_ref()).unwrap();
-        assert!(be.data_size == d.len() as u64);
     }
 
     #[test]
