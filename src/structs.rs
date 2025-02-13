@@ -174,7 +174,7 @@ pub enum Compression {
     Store = 0,
 }
 
-#[derive(Copy, Clone, Debug, Default, PackedStruct)]
+#[derive(Copy, Clone, Debug, Default, PackedStruct, PartialEq, Eq)]
 #[packed_struct(endian = "lsb", size_bytes = "4")]
 pub struct DosDatetime {
     time: u16,
@@ -214,6 +214,30 @@ impl DosDatetime {
             time: (second / 2) as u16 | ((minute as u16) << 5) | ((hour as u16) << 11),
             date: day as u16 | ((month as u16) << 5) | (((year - 1980) << 9) as u16),
         })
+    }
+
+    pub fn year(&self) -> i32 {
+        ((self.date >> 9) + 1980) as i32
+    }
+
+    pub fn month(&self) -> u32 {
+        ((self.date >> 5) & 15) as u32
+    }
+
+    pub fn day(&self) -> u32 {
+        (self.date & 31) as u32
+    }
+
+    pub fn hour(&self) -> u32 {
+        (self.time >> 11) as u32
+    }
+
+    pub fn minute(&self) -> u32 {
+        ((self.time >> 5) & 63) as u32
+    }
+
+    pub fn second(&self) -> u32 {
+        ((self.time & 31) * 2) as u32
     }
 }
 
@@ -264,6 +288,7 @@ pub mod unix_mode {
 mod tests {
     use super::DosDatetime;
     use assert2::assert;
+    use test_strategy::proptest;
 
     #[test]
     fn valid_dosdatetime_creation() {
@@ -329,5 +354,24 @@ mod tests {
         let datetime = dt.unwrap();
         // Check that the seconds were rounded down to 30
         assert!(datetime.time & 0b11111 == 15); // 15 represents 30 seconds (rounded down)
+    }
+
+    #[proptest]
+    fn dos_datetime_round_trip(
+        #[strategy(1980..2108)] year: i32,
+        #[strategy(1u32..=12u32)] month: u32,
+        #[strategy(1u32..=31u32)] day: u32,
+        #[strategy(0u32..24u32)] hour: u32,
+        #[strategy(0u32..60u32)] minute: u32,
+        #[strategy(0u32..60u32)] second: u32,
+    ) {
+        let dt = DosDatetime::new(year, month, day, hour, minute, second).unwrap();
+
+        assert!(dt.year() == year);
+        assert!(dt.month() == month);
+        assert!(dt.day() == day);
+        assert!(dt.hour() == hour);
+        assert!(dt.minute() == minute);
+        assert!(dt.second() == second & 0xfe);
     }
 }
