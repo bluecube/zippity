@@ -116,6 +116,7 @@ impl<D: EntryData> BuilderEntry<D> {
 }
 
 #[derive(Clone, Debug)]
+/// Represents entries of the zip file, which can be converted to a `Reader`.
 pub struct Builder<D: EntryData> {
     entries: IndexMap<String, BuilderEntry<D>>,
 }
@@ -293,12 +294,15 @@ mod test {
 
     #[test]
     fn unix_permissions_masking() {
-        let mut builder = Builder::<()>::new();
-        builder
-            .add_entry("X".into(), ())
-            .unwrap()
-            .unix_permissions(0o123456);
+        let mut entry = BuilderEntry {
+            data: (),
+            crc32: None,
+            datetime: None,
+            file_type: structs::unix_mode::FileType::File,
+            permissions: None,
+        };
+        entry.unix_permissions(0o123456);
 
-        assert!(builder.entries["X"].permissions == Some(0o456));
+        assert!(entry.permissions == Some(0o456));
     }
 }
