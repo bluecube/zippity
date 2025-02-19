@@ -146,7 +146,7 @@ pub mod funky_entry_data {
         }
     }
 
-    impl<'a> AsyncRead for LazyReader<'a> {
+    impl AsyncRead for LazyReader<'_> {
         fn poll_read(
             self: Pin<&mut Self>,
             cx: &mut std::task::Context<'_>,
@@ -164,7 +164,7 @@ pub mod funky_entry_data {
         }
     }
 
-    impl<'a> AsyncSeek for LazyReader<'a> {
+    impl AsyncSeek for LazyReader<'_> {
         fn start_seek(self: Pin<&mut Self>, position: std::io::SeekFrom) -> std::io::Result<()> {
             self.project().inner.start_seek(position)
         }

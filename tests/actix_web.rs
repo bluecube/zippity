@@ -98,7 +98,7 @@ async fn read_all(data: ReaderAndData, use_callback: bool) {
 }
 
 #[proptest(async = "tokio")]
-async fn read_block_(
+async fn read_block(
     data: ReaderAndData,
     use_callback: bool,
     #[strategy(0f64..1f64)] boundary1: f64,
