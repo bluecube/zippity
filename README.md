@@ -4,19 +4,19 @@ Library for asynchronously creating a ZIP file on the fly.
 
 ## Features
 
-- [x] Async, using tokio.
-- [x] ZIP is created on the fly, can be directly streamed somewhere, does not need to be stored in RAM or on disk
-- [x] Supports Zip64 (files > 4GB).
-- [x] File size is known in advance
-- [x] Output is driven from outside (implements `[tokio::io::AsyncRead]`)
-- [x] Allows seeking in the file (implements `[tokio::io::AsyncSeek]`)
-- [X] Supports files on the filesystem as entries.
-  - [ ] Supports tokio_uring
-- [X] Supports integration with Actix Web (see `[Reader::into_responder()]`)
-- [X] Entry metadata
+- Async, using tokio.
+- ZIP is created on the fly, can be directly streamed somewhere, does not need to be stored in RAM or on disk
+- Supports Zip64 (files > 4GB).
+- File size is known in advance
+- Output is driven from outside (implements `[tokio::io::AsyncRead]`)
+- Allows seeking in the file (implements `[tokio::io::AsyncSeek]`)
+- Supports files on the filesystem as entries
+  - This part works, but is being reworked, see #6.
+- Supports integration with Actix Web (`[Reader::into_responder()]`)
+  - This part works, but is being reworked, see #5.
 
 ## Non-features
-These are not planned to be implemented.
+These are not currently planned:
 
 - Compression: The zip only uses store method.
 - Encryption
@@ -54,7 +54,8 @@ copy(&mut zippity, &mut sink()).await.unwrap();
 
 ## Current state
 Consider this a beta version.
-The library is mostly finished, with lot of polish missing for version 1.0.0.
+The library is functional, but there are two more API breaking changes planned and then a lot of polish needed before releasing 1.0.0.
+See #1.
 
 ## Crate features
 
@@ -64,4 +65,4 @@ The library is mostly finished, with lot of polish missing for version 1.0.0.
 | `bytes` | Implement `EntryData` for `bytes::Bytes`, and provide method `into_bytes_stream()` for `Reader`. | no |
 | `actix-web` | Adds`actix_web::Reponder` implementation to `zippity::Reader` | no |
 | `proptest` | Add module `zippity::proptest`, with strategies, and `proptest::arbitrary::Arbitrary` implementation for `Reader`. | no |
-| `chrono` | Support for setting last modification date and time metadata using types from `chrono`. | false |
+| `chrono` | Support for setting last modification date and time metadata using types from `chrono`. | no |
