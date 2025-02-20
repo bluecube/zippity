@@ -1302,26 +1302,37 @@ mod test {
         }
     }
 
-    /// Tests that a zip archive with large file (> 4GB) and many files (> 65536)
-    /// can be created.
+    /// Tests that a zip archive with a large file (> 4GB) can be created.
     ///
     /// Doesn't check that it unpacks correctly to keep the requirements low,
     /// only verifies that the expected and actual sizes match.
     /// This doesn't actually store the file or archive, but is still fairly slow.
     #[tokio::test]
-    #[ignore = "this test is too slow"]
-    async fn zip64_works() {
+    async fn zip64_size() {
         let mut builder = Builder::<funky_entry_data::Zeros>::new();
         builder
             .add_entry(
                 "Big file".to_owned(),
-                funky_entry_data::Zeros::new(0x100000000),
+                funky_entry_data::Zeros::new(0x100000001),
             )
             .unwrap();
-        for i in 0..0xffff {
-            builder
-                .add_entry(format!("Empty file {}", i), funky_entry_data::Zeros::new(0))
-                .unwrap();
+        let zippity = pin!(builder.build());
+
+        let expected_size = zippity.size();
+        let actual_size = measure_size(zippity).await.unwrap();
+
+        assert!(actual_size == expected_size);
+    }
+
+    /// Tests that a zip archive with many files (> 65536) can be created.
+    ///
+    /// Doesn't check that it unpacks correctly to keep the requirements low,
+    /// only verifies that the expected and actual sizes match.
+    #[tokio::test]
+    async fn zip64_count() {
+        let mut builder = Builder::<()>::new();
+        for i in 0..0x10001 {
+            builder.add_entry(format!("Empty file {}", i), ()).unwrap();
         }
         let zippity = pin!(builder.build());
 
