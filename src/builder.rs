@@ -36,6 +36,17 @@ impl<D: EntryData + Debug> Debug for BuilderEntry<D> {
 }
 
 impl<D: EntryData> BuilderEntry<D> {
+    fn new(data: D, time_converter: Option<TimeConverter>) -> BuilderEntry<D> {
+        BuilderEntry {
+            data,
+            crc32: None,
+            datetime: None,
+            file_type: structs::unix_mode::FileType::File,
+            permissions: None,
+            time_converter,
+        }
+    }
+
     /// Sets the CRC32 of this entry.
     ///
     /// This is helpful, because if the `[Reader]` seeks over the file content, but still needs
@@ -277,14 +288,8 @@ impl<D: EntryData> Builder<D> {
         };
 
         let data = data.into();
-        let inserted = map_vacant_entry.insert(BuilderEntry {
-            data,
-            crc32: None,
-            datetime: None,
-            file_type: structs::unix_mode::FileType::File,
-            permissions: None,
-            time_converter: self.time_converter.clone(),
-        });
+        let inserted =
+            map_vacant_entry.insert(BuilderEntry::new(data, self.time_converter.clone()));
         Ok(inserted)
     }
 
@@ -508,14 +513,7 @@ mod test {
     fn datetime_test(setter_fn: impl FnOnce(&mut BuilderEntry<()>, i32, bool), year: i32) {
         let is_some = year >= 1980;
 
-        let mut entry = BuilderEntry {
-            data: (),
-            crc32: None,
-            datetime: None,
-            file_type: structs::unix_mode::FileType::File,
-            permissions: None,
-            time_converter: None,
-        };
+        let mut entry = BuilderEntry::new((), None);
 
         setter_fn(&mut entry, year, is_some);
 
@@ -542,14 +540,7 @@ mod test {
             unreachable!();
         };
 
-        let mut entry1 = BuilderEntry {
-            data: (),
-            crc32: None,
-            datetime: None,
-            file_type: structs::unix_mode::FileType::File,
-            permissions: None,
-            time_converter: None,
-        };
+        let mut entry1 = BuilderEntry::new((), None);
         let mut entry2 = entry1.clone();
 
         entry1.datetime_fields(year, month, day, hour, minute, second);
@@ -568,14 +559,7 @@ mod test {
             .unwrap()
             .datetime_system(SystemTime::UNIX_EPOCH)
             .unwrap();
-        let mut y = BuilderEntry {
-            data: (),
-            crc32: None,
-            datetime: None,
-            file_type: structs::unix_mode::FileType::File,
-            permissions: None,
-            time_converter: None,
-        };
+        let mut y = BuilderEntry::new((), None);
         y.datetime_fields(2000, 1, 2, 3, 4, 5).unwrap();
 
         assert!(x.datetime == y.datetime);
@@ -611,14 +595,7 @@ mod test {
 
     #[test]
     fn unix_permissions_masking() {
-        let mut entry = BuilderEntry {
-            data: (),
-            crc32: None,
-            datetime: None,
-            file_type: structs::unix_mode::FileType::File,
-            permissions: None,
-            time_converter: None,
-        };
+        let mut entry = BuilderEntry::new((), None);
         entry.unix_permissions(0o123456);
 
         assert!(entry.permissions == Some(0o456));
