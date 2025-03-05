@@ -216,26 +216,32 @@ impl DosDatetime {
         })
     }
 
+    #[cfg(test)]
     pub fn year(&self) -> i32 {
         ((self.date >> 9) + 1980) as i32
     }
 
+    #[cfg(test)]
     pub fn month(&self) -> u32 {
         ((self.date >> 5) & 15) as u32
     }
 
+    #[cfg(test)]
     pub fn day(&self) -> u32 {
         (self.date & 31) as u32
     }
 
+    #[cfg(test)]
     pub fn hour(&self) -> u32 {
         (self.time >> 11) as u32
     }
 
+    #[cfg(test)]
     pub fn minute(&self) -> u32 {
         ((self.time >> 5) & 63) as u32
     }
 
+    #[cfg(test)]
     pub fn second(&self) -> u32 {
         ((self.time & 31) * 2) as u32
     }
