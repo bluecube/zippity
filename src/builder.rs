@@ -1,4 +1,4 @@
-use std::{fmt::Debug, rc::Rc, time::SystemTime};
+use std::{fmt::Debug, fs::Metadata, os::linux::fs::MetadataExt, rc::Rc, time::SystemTime};
 
 #[cfg(feature = "chrono")]
 use chrono::{Datelike, NaiveDateTime, TimeZone, Timelike};
@@ -208,6 +208,28 @@ impl<D: EntryData> BuilderEntry<D> {
         self
     }
 
+    /// Sets entry type (directory / symlink / file), unix permissions and modification time from fs::Metadata.
+    ///
+    /// Uses the time converter set by the last call to `Builder::system_time_converter`, or `Builder::system_timezone`.
+    /// If the converter is not set, or the date is out of the representable range (1980-1-1 to 2107-12-31),
+    /// this method ignores the error and keeps previous modification time (default value is 1980-1-1T00:00:00).
+    pub fn metadata(&mut self, metadata: &Metadata) -> &mut Self {
+        if metadata.is_dir() {
+            self.directory();
+        } else if metadata.is_symlink() {
+            self.symlink();
+        } else {
+            self.file();
+        }
+        self.unix_permissions(metadata.st_mode());
+        if let Ok(modified) = metadata.modified() {
+            // We're skiping the modification time on platforms where the file metadata don't contain it
+            self.datetime_system_or_default(modified);
+        }
+
+        self
+    }
+
     fn get_local_size(&self, name: &str, data_size: u64) -> u64 {
         let local_header = structs::LocalFileHeader::packed_size();
         let zip64_extra_data = structs::Zip64ExtraField::packed_size();
@@ -340,8 +362,8 @@ impl<D: EntryData> Builder<D> {
 
     /// Sets a converter function that will be used for converting system times to field representation.
     ///
-    /// The converter is passed to newly created builder entries and used in `BuilderEntry::datetime_system` and
-    /// `BuilderEntry::datetime_system_or_default`.
+    /// The converter is passed to newly created builder entries and used in `BuilderEntry::datetime_system`,
+    /// `BuilderEntry::datetime_system_or_default` and `BuilderEntry::metadata`.
     pub fn system_time_converter<F>(&mut self, converter: F) -> &mut Self
     where
         F: Fn(SystemTime) -> (i32, u32, u32, u32, u32, u32) + 'static,
@@ -361,23 +383,37 @@ impl<D: EntryData> Builder<D> {
     where
         Tz: TimeZone + 'static,
     {
-        use chrono::{DateTime, Utc};
-
-        self.time_converter = Some(Rc::new(move |system_time| {
-            let naive = DateTime::<Utc>::from(system_time)
-                .with_timezone(&tz)
-                .naive_local();
-            (
-                naive.year(),
-                naive.month(),
-                naive.day(),
-                naive.hour(),
-                naive.minute(),
-                naive.second(),
-            )
-        }));
-
+        self.time_converter = Some(Rc::new(system_timezone_converter(tz)));
         self
+    }
+}
+
+/// Creates a converter function suitable for Builder::system_time_converter, that
+/// uses chrono and the given timezone to build the field representation.
+///
+/// This is the internal behavior of Builder::system_time_zone, refactored out
+/// for access during testing.
+#[cfg(feature = "chrono")]
+fn system_timezone_converter<Tz>(
+    tz: Tz,
+) -> impl Fn(SystemTime) -> (i32, u32, u32, u32, u32, u32) + 'static
+where
+    Tz: TimeZone + 'static,
+{
+    use chrono::{DateTime, Utc};
+
+    move |system_time| {
+        let naive = DateTime::<Utc>::from(system_time)
+            .with_timezone(&tz)
+            .naive_local();
+        (
+            naive.year(),
+            naive.month(),
+            naive.day(),
+            naive.hour(),
+            naive.minute(),
+            naive.second(),
+        )
     }
 }
 
@@ -599,5 +635,133 @@ mod test {
         entry.unix_permissions(0o123456);
 
         assert!(entry.permissions == Some(0o456));
+    }
+
+    mod metadata {
+        use std::{fs, os::unix::fs::PermissionsExt};
+
+        use assert2::assert;
+        use tempfile::TempDir;
+
+        use super::*;
+
+        #[test]
+        fn file() {
+            let tempdir = TempDir::new().unwrap();
+
+            let path = tempdir.as_ref().join("asdf");
+            fs::write(&path, b"hello world").unwrap();
+            let metadata = fs::symlink_metadata(path).unwrap();
+
+            let mut entry = BuilderEntry::new((), None);
+            entry.metadata(&metadata);
+            assert!(entry.file_type == structs::unix_mode::FileType::File);
+        }
+
+        #[test]
+        fn directory() {
+            let tempdir = TempDir::new().unwrap();
+
+            let path = tempdir.as_ref().join("asdf");
+            fs::create_dir(&path).unwrap();
+            let metadata = fs::symlink_metadata(path).unwrap();
+
+            let mut entry = BuilderEntry::new((), None);
+            entry.metadata(&metadata);
+            assert!(entry.file_type == structs::unix_mode::FileType::Directory);
+        }
+
+        #[test]
+        fn symlink() {
+            let tempdir = TempDir::new().unwrap();
+
+            let path1 = tempdir.as_ref().join("asdf");
+            let path2 = tempdir.as_ref().join("efgh");
+            fs::write(&path1, b"hello world").unwrap();
+            std::os::unix::fs::symlink(&path1, &path2).unwrap();
+            dbg!(&path2);
+            let metadata = fs::symlink_metadata(path2).unwrap();
+
+            let mut entry = BuilderEntry::new((), None);
+            entry.metadata(&metadata);
+            assert!(entry.file_type == structs::unix_mode::FileType::Symlink);
+        }
+
+        #[proptest]
+        fn file_permissions(#[strategy(0u32..0o777u32)] mode: u32) {
+            let tempdir = TempDir::new().unwrap();
+
+            let path = tempdir.as_ref().join("asdf");
+            fs::write(&path, b"hello world").unwrap();
+            let metadata = fs::symlink_metadata(&path).unwrap();
+            let mut p = metadata.permissions();
+            p.set_mode(mode);
+            fs::set_permissions(&path, p).unwrap();
+            let metadata = fs::symlink_metadata(path).unwrap();
+
+            let mut entry = BuilderEntry::new((), None);
+            entry.metadata(&metadata);
+            assert!(entry.permissions == Some(mode));
+        }
+
+        /// Tests that manually setting modification time from metadata system
+        /// time results in the same modification time as using `BuilderEntry::metadata`
+        #[cfg(feature = "chrono")]
+        #[test]
+        fn modification_time1() {
+            use chrono::Utc;
+
+            let tempdir = TempDir::new().unwrap();
+
+            let path = tempdir.as_ref().join("asdf");
+            fs::write(&path, b"hello world").unwrap();
+            let metadata = fs::symlink_metadata(path).unwrap();
+
+            let mut entry1 = BuilderEntry::new((), Some(Rc::new(system_timezone_converter(Utc))));
+            let mut entry2 = entry1.clone();
+
+            entry1.metadata(&metadata);
+            entry2.datetime_system(metadata.modified().unwrap());
+            assert!(entry1.datetime == entry2.datetime);
+        }
+
+        /// Checks that stored modification time is within few seconds from `SystemTime::now()`
+        /// obtained near the file creation.
+        /// This test is potentially fragile.
+        #[cfg(feature = "chrono")]
+        #[test]
+        fn modification_time2() {
+            use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
+
+            let tempdir = TempDir::new().unwrap();
+
+            let path = tempdir.as_ref().join("asdf");
+            fs::write(&path, b"hello world").unwrap();
+            let creation_time = SystemTime::now();
+            let metadata = fs::symlink_metadata(path).unwrap();
+
+            let mut entry = BuilderEntry::new((), Some(Rc::new(system_timezone_converter(Utc))));
+            entry.metadata(&metadata);
+
+            let entry_datetime = entry.datetime.expect("Entry must have the datetime set");
+            let entry_datetime = NaiveDate::from_ymd_opt(
+                entry_datetime.year(),
+                entry_datetime.month(),
+                entry_datetime.day(),
+            )
+            .unwrap()
+            .and_hms_opt(
+                entry_datetime.hour(),
+                entry_datetime.minute(),
+                entry_datetime.second(),
+            )
+            .unwrap()
+            .and_utc();
+            let creation_time = DateTime::<Utc>::from(creation_time);
+
+            let difference = (entry_datetime - creation_time).abs();
+
+            assert!(difference < TimeDelta::seconds(5))
+        }
     }
 }

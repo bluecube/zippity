@@ -270,7 +270,7 @@ impl<T: PackedStruct> PackedStructZippityExt for T {
 }
 
 pub mod unix_mode {
-    #[derive(Clone, Debug)]
+    #[derive(Clone, Debug, PartialEq, Eq)]
     pub enum FileType {
         File,
         Directory,
