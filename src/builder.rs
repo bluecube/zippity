@@ -1,4 +1,30 @@
-use std::{fmt::Debug, fs::Metadata, os::linux::fs::MetadataExt, rc::Rc, time::SystemTime};
+use std::{fmt::Debug, fs::Metadata, rc::Rc, time::SystemTime};
+
+#[cfg(target_os = "linux")]
+use std::os::linux::fs::MetadataExt;
+
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "watchos",
+    target_os = "tvos",
+    target_os = "visionos"
+))]
+use std::os::darwin::fs::MetadataExt;
+
+#[cfg(target_os = "windows")]
+use std::os::windows::fs::MetadataExt;
+
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "watchos",
+    target_os = "tvos",
+    target_os = "visionos",
+    target_os = "windows",
+    target_os = "linux"
+)))]
+use std::os::unix::fs::MetadataExt;
 
 #[cfg(feature = "chrono")]
 use chrono::{Datelike, NaiveDateTime, TimeZone, Timelike};
