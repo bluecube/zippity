@@ -177,7 +177,7 @@ impl<D: EntryData> BuilderEntry<D> {
         );
         self
     }
-    /// Sets the entry to be a directory.
+    /// Sets the entry to be a file.
     /// This is the default.
     pub fn file(&mut self) -> &mut Self {
         self.file_type = structs::unix_mode::FileType::File;
