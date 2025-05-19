@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::Range};
+use std::{collections::HashMap, io::Write, ops::Range, path::Path};
 
 use indexmap::IndexMap;
 
@@ -8,6 +8,7 @@ use proptest::{
     arbitrary::Arbitrary,
     strategy::{BoxedStrategy, Just, MapInto, Strategy},
 };
+use tempfile::TempDir;
 
 #[derive(Clone, Debug)]
 pub struct TestEntryData(pub IndexMap<String, Bytes>);
@@ -186,5 +187,21 @@ impl From<TestEntryData> for ReaderAndData {
             reader: builder.build(),
             data: value,
         }
+    }
+}
+
+impl TestEntryData {
+    /// Creates a temporary directory that contains files corresponding to the test entry data.
+    pub fn make_directory(&self) -> std::io::Result<TempDir> {
+        let tmp = TempDir::new()?;
+
+        for (name, value) in self.0.iter() {
+            let path = tmp.as_ref().join(Path::new(&name));
+            std::fs::create_dir_all(path.parent().unwrap())?;
+            let mut f = std::fs::File::create(path)?;
+            f.write_all(value)?;
+        }
+
+        Ok(tmp)
     }
 }
