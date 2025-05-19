@@ -61,7 +61,7 @@ See #1.
 
 | Name | Description | Default |
 | ---- | ----------- | ------- |
-| `tokio-file` | Adds support for `TokioFileEntry` being used as a entry data through Tokio file. | yes |
+| `tokio-file` | Adds support for `FilesystemEntry` being used as a entry data, based on `Tokio::File`. | yes |
 | `bytes` | Implement `EntryData` for `bytes::Bytes`, and provide method `into_bytes_stream()` for `Reader`. | no |
 | `actix-web` | Adds`actix_web::Reponder` implementation to `zippity::Reader` | no |
 | `proptest` | Add module `zippity::proptest`, with strategies, and `proptest::arbitrary::Arbitrary` implementation for `Reader`. | no |

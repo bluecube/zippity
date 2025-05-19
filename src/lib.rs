@@ -12,7 +12,7 @@ mod structs;
 #[cfg(feature = "actix-web")]
 mod actix_web;
 #[cfg(feature = "tokio-file")]
-mod tokio_file;
+mod filesystem_entry;
 
 #[cfg(feature = "bytes")]
 mod bytes;
@@ -28,7 +28,7 @@ pub use entry_data::EntryData;
 pub use reader::Reader;
 
 #[cfg(feature = "tokio-file")]
-pub use tokio_file::TokioFileEntry;
+pub use filesystem_entry::FilesystemEntry;
 
 #[cfg(feature = "bytes")]
 pub use bytes::BytesStream;
@@ -53,6 +53,14 @@ pub enum Error {
     },
     #[error("Attempting to seek before the start of the file")]
     SeekingBeforeStart,
+
+    #[cfg(feature = "tokio-file")]
+    #[error("Error reading symlink: {source}")]
+    ReadlinkFailed { source: std::io::Error },
+
+    #[cfg(feature = "tokio-file")]
+    #[error("Error when traversig directories: {source}")]
+    DirectoryTraversalFailed { source: std::io::Error },
 }
 
 impl From<Error> for std::io::Error {
