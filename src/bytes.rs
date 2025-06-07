@@ -6,7 +6,7 @@ use std::{
 };
 
 use bytes::{Bytes, BytesMut};
-use futures_util::Stream;
+use futures_core::Stream;
 use pin_project::pin_project;
 use tokio_util::io::poll_read_buf;
 
