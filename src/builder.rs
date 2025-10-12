@@ -1,4 +1,9 @@
-use std::{fmt::Debug, fs::Metadata, os::linux::fs::MetadataExt, rc::Rc, time::SystemTime};
+use std::{
+    fmt::Debug,
+    fs::{Metadata, Permissions},
+    rc::Rc,
+    time::SystemTime,
+};
 
 #[cfg(feature = "chrono")]
 use chrono::{Datelike, NaiveDateTime, TimeZone, Timelike};
@@ -208,6 +213,21 @@ impl<D: EntryData> BuilderEntry<D> {
         self
     }
 
+    pub fn permissions(&mut self, permissions: &Permissions) -> &mut Self {
+        #[cfg(unix)]
+        let unix_permissions = {
+            use std::os::unix::fs::PermissionsExt as _;
+            permissions.mode()
+        };
+        #[cfg(not(unix))]
+        let unix_permissions = if (permissions.readonly()) {
+            0o444
+        } else {
+            0o666
+        };
+        self.unix_permissions(unix_permissions)
+    }
+
     /// Sets entry type (directory / symlink / file), unix permissions and modification time from fs::Metadata.
     ///
     /// Uses the time converter set by the last call to `Builder::system_time_converter`, or `Builder::system_timezone`.
@@ -221,7 +241,7 @@ impl<D: EntryData> BuilderEntry<D> {
         } else {
             self.file();
         }
-        self.unix_permissions(metadata.st_mode());
+        self.permissions(&metadata.permissions());
         if let Ok(modified) = metadata.modified() {
             // We're skiping the modification time on platforms where the file metadata don't contain it
             self.datetime_system_or_default(modified);
