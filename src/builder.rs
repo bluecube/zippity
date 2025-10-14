@@ -23,9 +23,23 @@ pub struct BuilderEntry<D> {
     data: D,
     crc32: Option<u32>,
     datetime: Option<structs::DosDatetime>,
-    file_type: structs::unix_mode::FileType,
-    permissions: Option<u32>,
+    file_type: BuilderFileType,
+    permissions: BuilderPermissions,
     time_converter: Option<TimeConverter>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BuilderPermissions {
+    Rw,
+    Ro,
+    UnixPermissions(u32),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum BuilderFileType {
+    File,
+    Directory,
+    Symlink,
 }
 
 impl<D: EntryData + Debug> Debug for BuilderEntry<D> {
@@ -46,8 +60,8 @@ impl<D: EntryData> BuilderEntry<D> {
             data,
             crc32: None,
             datetime: None,
-            file_type: structs::unix_mode::FileType::File,
-            permissions: None,
+            file_type: BuilderFileType::File,
+            permissions: BuilderPermissions::Rw,
             time_converter,
         }
     }
@@ -185,7 +199,7 @@ impl<D: EntryData> BuilderEntry<D> {
     /// Sets the entry to be a file.
     /// This is the default.
     pub fn file(&mut self) -> &mut Self {
-        self.file_type = structs::unix_mode::FileType::File;
+        self.file_type = BuilderFileType::File;
         self
     }
 
@@ -194,14 +208,14 @@ impl<D: EntryData> BuilderEntry<D> {
     /// and the entry names should end with slash and, neither of which is enforced or
     /// verified by zippity.
     pub fn directory(&mut self) -> &mut Self {
-        self.file_type = structs::unix_mode::FileType::Directory;
+        self.file_type = BuilderFileType::Directory;
         self
     }
 
     /// Sets the entry to be a symlink.
     /// Symlinks don't support setting permissions will ignore any value set.
     pub fn symlink(&mut self) -> &mut Self {
-        self.file_type = structs::unix_mode::FileType::Symlink;
+        self.file_type = BuilderFileType::Symlink;
         self
     }
 
@@ -209,23 +223,35 @@ impl<D: EntryData> BuilderEntry<D> {
     /// If permissions are not set, default is 0o755 for directories and 0o644 for files.
     /// Symlinks don't support setting permissions will ignore any value set.
     pub fn unix_permissions(&mut self, permissions: u32) -> &mut Self {
-        self.permissions = Some(permissions & 0o777);
+        self.permissions = BuilderPermissions::UnixPermissions(permissions & 0o777);
         self
     }
 
+    /// Sets the entry permissions based on fs::Permissions.
+    /// On unix this is equivalent to calling `unix_permissions` with the output of `permissions.mode()`,
+    /// on non-unix systems this sets the file as RO or RW.
     pub fn permissions(&mut self, permissions: &Permissions) -> &mut Self {
         #[cfg(unix)]
-        let unix_permissions = {
+        {
             use std::os::unix::fs::PermissionsExt as _;
-            permissions.mode()
+            self.unix_permissions(permissions.mode());
         };
         #[cfg(not(unix))]
-        let unix_permissions = if (permissions.readonly()) {
-            0o444
+        {
+            self.ro(permissions.readonly());
+        }
+        self
+    }
+
+    /// Sets the entry permissions to be read only or read-write.
+    /// This overrides anything set using `permissions` or `unix_permissions`.
+    pub fn readonly(&mut self, ro: bool) -> &mut Self {
+        self.permissions = if ro {
+            BuilderPermissions::Ro
         } else {
-            0o666
+            BuilderPermissions::Rw
         };
-        self.unix_permissions(unix_permissions)
+        self
     }
 
     /// Sets entry type (directory / symlink / file), unix permissions and modification time from fs::Metadata.
@@ -347,7 +373,7 @@ impl<D: EntryData> Builder<D> {
                 offset += local_size;
                 cd_size += BuilderEntry::<D>::get_cd_header_size(&name);
                 let external_attributes =
-                    structs::unix_mode::get_external_attributes(entry.file_type, entry.permissions);
+                    get_external_attributes(entry.file_type, entry.permissions);
 
                 entries.push(ReaderEntry::new(
                     name,
@@ -435,6 +461,35 @@ where
             naive.second(),
         )
     }
+}
+
+/// Converts filetype and permissions to a value usable as external attributes of zip entry.
+/// The file type controls both the top bits of the unix mode and the default permissions.
+/// Symlinks have permissions always set to 0o777 and ignore the parameter.
+fn get_external_attributes(file_type: BuilderFileType, permissions: BuilderPermissions) -> u32 {
+    let file_type_bits = match file_type {
+        BuilderFileType::File => 0o100000,
+        BuilderFileType::Directory => 0o040000,
+        BuilderFileType::Symlink => 0o120000,
+    };
+
+    let perm_bits = match file_type {
+        BuilderFileType::Symlink => 0o777,
+        _ => {
+            let executable_bits = match file_type {
+                BuilderFileType::Directory => 0o111,
+                _ => 0,
+            };
+
+            match permissions {
+                BuilderPermissions::Rw => 0o644 | executable_bits,
+                BuilderPermissions::Ro => 0o444 | executable_bits,
+                BuilderPermissions::UnixPermissions(perms) => perms & 0o777,
+            }
+        }
+    };
+
+    (file_type_bits | perm_bits) << 16
 }
 
 #[cfg(test)]
@@ -654,7 +709,7 @@ mod test {
         let mut entry = BuilderEntry::new((), None);
         entry.unix_permissions(0o123456);
 
-        assert!(entry.permissions == Some(0o456));
+        assert!(entry.permissions == BuilderPermissions::UnixPermissions(0o456));
     }
 
     mod metadata {
@@ -666,6 +721,23 @@ mod test {
         use super::*;
 
         #[test]
+        fn readonly() {
+            let mut entry = BuilderEntry::new((), None);
+            assert!(entry.permissions == BuilderPermissions::Rw);
+            entry.readonly(true);
+            assert!(entry.permissions == BuilderPermissions::Ro);
+            entry.readonly(false);
+            assert!(entry.permissions == BuilderPermissions::Rw);
+        }
+
+        #[proptest]
+        fn unix_permissions(#[strategy(0u32..0o777u32)] permissions: u32) {
+            let mut entry = BuilderEntry::new((), None);
+            entry.unix_permissions(permissions);
+            assert!(entry.permissions == BuilderPermissions::UnixPermissions(permissions));
+        }
+
+        #[test]
         fn file() {
             let tempdir = TempDir::new().unwrap();
 
@@ -675,7 +747,7 @@ mod test {
 
             let mut entry = BuilderEntry::new((), None);
             entry.metadata(&metadata);
-            assert!(entry.file_type == structs::unix_mode::FileType::File);
+            assert!(entry.file_type == BuilderFileType::File);
         }
 
         #[test]
@@ -688,7 +760,7 @@ mod test {
 
             let mut entry = BuilderEntry::new((), None);
             entry.metadata(&metadata);
-            assert!(entry.file_type == structs::unix_mode::FileType::Directory);
+            assert!(entry.file_type == BuilderFileType::Directory);
         }
 
         #[test]
@@ -704,24 +776,43 @@ mod test {
 
             let mut entry = BuilderEntry::new((), None);
             entry.metadata(&metadata);
-            assert!(entry.file_type == structs::unix_mode::FileType::Symlink);
+            assert!(entry.file_type == BuilderFileType::Symlink);
         }
 
+        #[cfg(unix)]
         #[proptest]
-        fn file_permissions(#[strategy(0u32..0o777u32)] mode: u32) {
+        fn file_permissions(#[strategy(0u32..0o777u32)] permissions: u32) {
             let tempdir = TempDir::new().unwrap();
 
             let path = tempdir.as_ref().join("asdf");
             fs::write(&path, b"hello world").unwrap();
             let metadata = fs::symlink_metadata(&path).unwrap();
             let mut p = metadata.permissions();
-            p.set_mode(mode);
+            p.set_mode(permissions);
             fs::set_permissions(&path, p).unwrap();
             let metadata = fs::symlink_metadata(path).unwrap();
 
             let mut entry = BuilderEntry::new((), None);
-            entry.metadata(&metadata);
-            assert!(entry.permissions == Some(mode));
+            entry.permissions(&metadata.permissions());
+            assert!(entry.permissions == BuilderPermissions::UnixPermissions(permissions));
+        }
+
+        #[cfg(windows)]
+        #[proptest]
+        fn file_permissions_windows(readonly: bool) {
+            let path = tempdir.as_ref().join("asdf");
+            fs::write(&path, b"hello world").unwrap();
+            let metadata = fs::symlink_metadata(&path).unwrap();
+            let mut p = metadata.permissions();
+            p.set_readonly(readonly);
+            fs::set_permissions(&path, p).unwrap();
+            let metadata = fs::symlink_metadata(path).unwrap();
+
+            let mut entry = BuilderEntry::new((), None);
+            entry.permissions(&metadata.permissions());
+
+            let expected = if readonly { 0o444 } else { 0o666 };
+            assert_eq!(entry.permissions, Some(expected));
         }
 
         /// Tests that manually setting modification time from metadata system
