@@ -929,7 +929,7 @@ impl<D: EntryData + Clone> Clone for Reader<D> {
     }
 }
 
-fn get_read_buf(vec: &mut Vec<u8>) -> ReadBuf {
+fn get_read_buf(vec: &mut Vec<u8>) -> ReadBuf<'_> {
     vec.reserve(READ_SIZE);
     ReadBuf::uninit(&mut vec.spare_capacity_mut()[..READ_SIZE])
 }
