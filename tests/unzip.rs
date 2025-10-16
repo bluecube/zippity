@@ -210,6 +210,45 @@ async fn directory_override_permissions() {
 }
 
 #[tokio::test]
+async fn readonly_file_permissions() {
+    let mut builder: Builder<()> = Builder::new();
+
+    builder
+        .add_entry("ro_file".into(), ())
+        .unwrap()
+        .readonly(true);
+
+    let mut unpacked = build_and_open(builder).await;
+
+    assert!(unpacked.len() == 1);
+
+    let permissions = unpacked.by_index(0).unwrap().unix_mode().unwrap();
+
+    // Expect readonly file => 0o100444
+    assert!(permissions == 0o100444);
+}
+
+#[tokio::test]
+async fn readonly_directory_permissions() {
+    let mut builder: Builder<()> = Builder::new();
+
+    builder
+        .add_entry("ro_dir".into(), ())
+        .unwrap()
+        .directory()
+        .readonly(true);
+
+    let mut unpacked = build_and_open(builder).await;
+
+    assert!(unpacked.len() == 1);
+
+    let permissions = unpacked.by_index(0).unwrap().unix_mode().unwrap();
+
+    // Expect readonly directory => 0o40555
+    assert!(permissions == 0o40555);
+}
+
+#[tokio::test]
 async fn symlink_permissions() {
     let mut builder: Builder<()> = Builder::new();
 
