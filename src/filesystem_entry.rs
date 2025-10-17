@@ -25,12 +25,11 @@ use crate::{Builder, BuilderEntry, EntryData, Error};
 /// (and more opinionated) alternatives.
 pub struct FilesystemEntry {
     path: PathBuf,
-    size: u64,
     entry_type: EntryType,
 }
 
 enum EntryType {
-    File,
+    File { size: u64 },
     Directory,
     Symlink { target_bytes: Arc<[u8]> },
 }
@@ -39,11 +38,7 @@ impl FilesystemEntry {
     /// Constructs a new FilesystemEntry, with entry metadata given from outside.
     pub async fn with_metadata(path: PathBuf, metadata: &Metadata) -> Result<Self, Error> {
         let entry_type = EntryType::with_metadata(&path, metadata).await?;
-        Ok(FilesystemEntry {
-            path,
-            size: metadata.len(),
-            entry_type,
-        })
+        Ok(FilesystemEntry { path, entry_type })
     }
 }
 
@@ -59,7 +54,9 @@ impl EntryType {
                 target_bytes: target.as_os_str().as_encoded_bytes().into(),
             })
         } else {
-            Ok(EntryType::File)
+            Ok(EntryType::File {
+                size: metadata.len(),
+            })
         }
     }
 }
@@ -70,7 +67,7 @@ impl EntryData for FilesystemEntry {
 
     fn get_reader(&self) -> Self::Future {
         match self.entry_type {
-            EntryType::File => FilesystemEntryFuture::File {
+            EntryType::File { size: _ } => FilesystemEntryFuture::File {
                 file_future: Box::pin(File::open(self.path.clone())),
             },
             EntryType::Directory => FilesystemEntryFuture::Directory,
@@ -81,7 +78,11 @@ impl EntryData for FilesystemEntry {
     }
 
     fn size(&self) -> u64 {
-        self.size
+        match self.entry_type {
+            EntryType::File { size } => size,
+            EntryType::Directory => 0,
+            EntryType::Symlink { ref target_bytes } => target_bytes.len() as u64,
+        }
     }
 }
 
@@ -354,6 +355,7 @@ mod test {
         }
 
         assert_eq!(fs_entry.path, symlink_path);
-        assert_eq!(fs_entry.size, metadata.len());
     }
+
+    // TODO: File entry, directory entry
 }
