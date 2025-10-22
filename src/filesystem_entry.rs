@@ -23,11 +23,13 @@ use crate::{Builder, BuilderEntry, EntryData, Error};
 /// Constructing this structure directly through new() gives the most versatile interface, but
 /// `Builder::add_filesystem_entry` or `Builder::add_directory_recursive` can be used as simpler
 /// (and more opinionated) alternatives.
+#[derive(Debug, Clone)]
 pub struct FilesystemEntry {
     path: PathBuf,
     entry_type: EntryType,
 }
 
+#[derive(Debug, Clone)]
 enum EntryType {
     File { size: u64 },
     Directory,
