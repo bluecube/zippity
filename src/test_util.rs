@@ -8,7 +8,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 pub fn read_size_strategy() -> impl Strategy<Value = usize> {
     const MIN: usize = 1;
     const MAX: usize = 8192;
-    (MIN..=MAX).prop_map(|v| (MAX + MIN - v))
+    (MIN..=MAX).prop_map(|v| MAX + MIN - v)
 }
 
 /// Takes an async readable, collects all data to vec.
@@ -204,25 +204,6 @@ pub mod funky_entry_data {
                     inner: Cursor::new(self.data),
                     delay: true,
                 }))
-            }
-        }
-    }
-
-    pub struct LazyReaderSizeFuture {
-        size: u64,
-        delay: bool,
-    }
-
-    impl Future for LazyReaderSizeFuture {
-        type Output = Result<u64>;
-
-        fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-            self.delay = !self.delay;
-            if !self.delay {
-                cx.waker().wake_by_ref();
-                Poll::Pending
-            } else {
-                Poll::Ready(Result::Ok(self.size))
             }
         }
     }
