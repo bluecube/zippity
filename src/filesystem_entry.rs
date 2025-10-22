@@ -72,10 +72,12 @@ impl EntryData for FilesystemEntry {
             EntryType::File { size: _ } => FilesystemEntryFuture::File {
                 file_future: Box::pin(File::open(self.path.clone())),
             },
-            EntryType::Directory => FilesystemEntryFuture::Directory,
             EntryType::Symlink { ref target_bytes } => FilesystemEntryFuture::Symlink {
                 target_bytes: Arc::clone(target_bytes),
             },
+            EntryType::Directory => {
+                unreachable!("Directories are zero-sized, should be skipped by reader")
+            }
         }
     }
 
@@ -92,10 +94,10 @@ pub enum FilesystemEntryFuture {
     File {
         file_future: Pin<Box<dyn Future<Output = std::io::Result<File>>>>,
     },
-    Directory,
     Symlink {
         target_bytes: Arc<[u8]>,
     },
+    // Directory is not here, because zero sized entries are skipped by reader.
 }
 
 impl Future for FilesystemEntryFuture {
@@ -108,7 +110,6 @@ impl Future for FilesystemEntryFuture {
                 let inner_reader = ready!(file_future.as_mut().poll(cx))?;
                 Poll::Ready(Ok(FilesystemEntryReader::File(inner_reader)))
             }
-            FilesystemEntryFuture::Directory => Poll::Ready(Ok(FilesystemEntryReader::Directory)),
             FilesystemEntryFuture::Symlink { target_bytes } => {
                 let cursor = Cursor::new(Arc::clone(target_bytes));
                 Poll::Ready(Ok(FilesystemEntryReader::Symlink(cursor)))
@@ -120,7 +121,6 @@ impl Future for FilesystemEntryFuture {
 #[pin_project(project = FilesystemEntryReaderProj)]
 pub enum FilesystemEntryReader {
     File(#[pin] File),
-    Directory,
     Symlink(#[pin] Cursor<Arc<[u8]>>),
     // Cursor is unpin, so we wouldn't really need to pin it here, but it saves a bit of typing later
 }
@@ -133,7 +133,6 @@ impl AsyncRead for FilesystemEntryReader {
     ) -> Poll<std::io::Result<()>> {
         match self.project() {
             FilesystemEntryReaderProj::File(pin) => pin.poll_read(cx, buf),
-            FilesystemEntryReaderProj::Directory => Poll::Ready(Ok(())),
             FilesystemEntryReaderProj::Symlink(cursor) => cursor.poll_read(cx, buf),
         }
     }
@@ -143,7 +142,6 @@ impl AsyncSeek for FilesystemEntryReader {
     fn start_seek(self: Pin<&mut Self>, position: std::io::SeekFrom) -> std::io::Result<()> {
         match self.project() {
             FilesystemEntryReaderProj::File(pin) => pin.start_seek(position),
-            FilesystemEntryReaderProj::Directory => Ok(()),
             FilesystemEntryReaderProj::Symlink(cursor) => cursor.start_seek(position),
         }
     }
@@ -151,7 +149,6 @@ impl AsyncSeek for FilesystemEntryReader {
     fn poll_complete(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<u64>> {
         match self.project() {
             FilesystemEntryReaderProj::File(pin) => pin.poll_complete(cx),
-            FilesystemEntryReaderProj::Directory => Poll::Ready(Ok(0)),
             FilesystemEntryReaderProj::Symlink(cursor) => cursor.poll_complete(cx),
         }
     }
