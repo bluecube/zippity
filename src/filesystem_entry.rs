@@ -259,8 +259,10 @@ mod test {
     use super::*;
 
     use crate::proptest::{ArbitraryTestEntryDataParams, TestEntryData};
+    use crate::test_util::read_to_vec;
 
     use assert2::assert;
+    use std::pin::pin;
     use tempfile::TempDir;
     use test_case::test_case;
     use test_strategy::proptest;
@@ -329,6 +331,48 @@ mod test {
     }
 
     #[tokio::test]
+    async fn file_entry_with_metadata() {
+        let test_dir = TempDir::new().unwrap();
+
+        let file_path = test_dir.path().join("file.txt");
+        tokio::fs::write(&file_path, b"hello").await.unwrap();
+
+        let metadata = tokio::fs::symlink_metadata(&file_path).await.unwrap();
+        let fs_entry = FilesystemEntry::with_metadata(file_path.clone(), &metadata)
+            .await
+            .unwrap();
+
+        match fs_entry.entry_type {
+            EntryType::File { size } => {
+                assert!(size == 5);
+            }
+            _ => panic!("Expected symlink entry type"),
+        }
+
+        assert_eq!(fs_entry.path, file_path);
+    }
+
+    #[tokio::test]
+    async fn directory_entry_with_metadata() {
+        let test_dir = TempDir::new().unwrap();
+
+        let directory_path = test_dir.path().join("directory");
+        tokio::fs::create_dir(&directory_path).await.unwrap();
+
+        let metadata = tokio::fs::symlink_metadata(&directory_path).await.unwrap();
+        let fs_entry = FilesystemEntry::with_metadata(directory_path.clone(), &metadata)
+            .await
+            .unwrap();
+
+        match fs_entry.entry_type {
+            EntryType::Directory => (),
+            _ => panic!("Expected symlink entry type"),
+        }
+
+        assert_eq!(fs_entry.path, directory_path);
+    }
+
+    #[tokio::test]
     async fn symlink_entry_with_metadata() {
         let test_dir = TempDir::new().unwrap();
 
@@ -356,5 +400,39 @@ mod test {
         assert_eq!(fs_entry.path, symlink_path);
     }
 
-    // TODO: File entry, directory entry
+    /// Create a fixed directory-based sample zip and try reading a random byte in it.
+    /// Checks the functionality of seeking in FileEntry.
+    #[cfg(unix)]
+    #[proptest(async = "tokio")]
+    async fn file_dir_symlink_seek(#[strategy(0f64..1f64)] seek_pos: f64) {
+        use crate::test_util::prepare_test_dir;
+        use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+        let tempdir = prepare_test_dir();
+        let mut builder = Builder::new();
+        builder
+            .add_directory_recursive(tempdir.path().to_owned(), None)
+            .await
+            .unwrap();
+
+        let mut whole_reader = pin!(builder.clone().build());
+        let whole_zip = read_to_vec(whole_reader.as_mut(), 8192).await.unwrap();
+
+        let seek_pos = (seek_pos * whole_zip.len() as f64).floor() as u64;
+        // Insert CRC32s from the first reader to the second builder.
+        // Not having to recalcualte the CRC makes the second reader actually seek in
+        // the file, not just read the whole thing and ignore the beginning.
+        for (k, v) in whole_reader.crc32s() {
+            builder.entries.get_mut(k).unwrap().crc32(v);
+        }
+
+        let mut reader = pin!(builder.build());
+        reader
+            .seek(std::io::SeekFrom::Start(seek_pos))
+            .await
+            .unwrap();
+        let byte = reader.read_u8().await.unwrap();
+
+        assert!(byte == whole_zip[seek_pos as usize]);
+    }
 }

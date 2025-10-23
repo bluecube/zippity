@@ -1,7 +1,8 @@
 use assert2::assert;
 use proptest::strategy::Strategy;
-use std::io::Result;
 use std::pin::Pin;
+use std::{fs, io::Result};
+use tempfile::TempDir;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 /// Returns a proptest strategy that minimizes to maximum read size
@@ -33,6 +34,25 @@ pub async fn read_to_vec(
             return Ok(buffer);
         }
     }
+}
+
+/// Creates a temp directory that contains a file a directory and a symlink.
+#[cfg(unix)] // Uses unix symlinks
+pub fn prepare_test_dir() -> TempDir {
+    let tempdir = TempDir::new().unwrap();
+
+    let dir_path = tempdir.path().join("dir");
+    fs::create_dir(&dir_path).unwrap();
+    let f_path = dir_path.join("file");
+    fs::write(&f_path, b"Hello world\nohiofgHSOIasdagadgdagjhjkghsuhkjhkjhffoiweh89234upoisjvmoui90ujgpojfu0ujrujodijfsehfohaaaaaaaaaaaaaaaaaughkJGHohkljsddddddddddddddddddddddddd").unwrap();
+    std::os::unix::fs::symlink("dir/file", tempdir.path().join("link1")).unwrap();
+    std::os::unix::fs::symlink(
+        "/foo/barasdjksdhfkshiguhuidghSHGkushgikSHGKSghKSGhkSJDGHKaaaaaaaaaaaaaaahiofgHSOIGHihIOGhidfaaaaaaaaaaaaaaasdagadgdagjhjkghsuhkjhkjhffoiweh89234upoisjvmoui90ujgpojfu0ujrujodijfsehfohaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaughkJGHohkljsdddddddddddddddddddddddddddddddddddddddddaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaSGHKSJDGHKJSGHKSJGjHGJkSHgSHG",
+        tempdir.path().join("link2"),
+    )
+    .unwrap();
+
+    tempdir
 }
 
 /// Takes an async readable, goes through all its data discarding it,
