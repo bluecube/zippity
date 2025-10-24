@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 9abe2a4592fa1f8828e745a53e9de41e3cf6f18b5638f39d2f929af9ec1e38e6 # shrinks to input = _AddDirectoryRecursiveEntriesNoPrefixArgs { content: TestEntryData({"a/a": b""}) }
+cc a65f98a6d8309316e7038b18cce9be6c95a29c557bdc0b9cc6a274fc8a9929b8 # shrinks to input = _AddDirectoryRecursiveEntriesNoPrefixArgs { content: TestEntryData({"a/a": b""}) }
+cc 8326c762394d85d6593a53a640f96bcb139a1c48dd9d27884f69f54bf2ffe52c # shrinks to input = _AddDirectoryRecursiveEntriesNoPrefixArgs { content: TestEntryData({}) }
+cc 55dd5ed1a5a7a2df7bf6218a283cc7dcb42f6a2212715d3a55f663c60e122012 # shrinks to input = _AddDirectoryRecursiveEntriesNoPrefixArgs { content: TestEntryData({}) }

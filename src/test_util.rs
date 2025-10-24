@@ -1,14 +1,15 @@
 use assert2::assert;
 use proptest::strategy::Strategy;
-use std::io::Result;
 use std::pin::Pin;
+use std::{fs, io::Result};
+use tempfile::TempDir;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 /// Returns a proptest strategy that minimizes to maximum read size
 pub fn read_size_strategy() -> impl Strategy<Value = usize> {
     const MIN: usize = 1;
     const MAX: usize = 8192;
-    (MIN..=MAX).prop_map(|v| (MAX + MIN - v))
+    (MIN..=MAX).prop_map(|v| MAX + MIN - v)
 }
 
 /// Takes an async readable, collects all data to vec.
@@ -33,6 +34,25 @@ pub async fn read_to_vec(
             return Ok(buffer);
         }
     }
+}
+
+/// Creates a temp directory that contains a file a directory and a symlink.
+#[cfg(unix)] // Uses unix symlinks
+pub fn prepare_test_dir() -> TempDir {
+    let tempdir = TempDir::new().unwrap();
+
+    let dir_path = tempdir.path().join("dir");
+    fs::create_dir(&dir_path).unwrap();
+    let f_path = dir_path.join("file");
+    fs::write(&f_path, b"Hello world\nohiofgHSOIasdagadgdagjhjkghsuhkjhkjhffoiweh89234upoisjvmoui90ujgpojfu0ujrujodijfsehfohaaaaaaaaaaaaaaaaaughkJGHohkljsddddddddddddddddddddddddd").unwrap();
+    std::os::unix::fs::symlink("dir/file", tempdir.path().join("link1")).unwrap();
+    std::os::unix::fs::symlink(
+        "/foo/barasdjksdhfkshiguhuidghSHGkushgikSHGKSghKSGhkSJDGHKaaaaaaaaaaaaaaahiofgHSOIGHihIOGhidfaaaaaaaaaaaaaaasdagadgdagjhjkghsuhkjhkjhffoiweh89234upoisjvmoui90ujgpojfu0ujrujodijfsehfohaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaughkJGHohkljsdddddddddddddddddddddddddddddddddddddddddaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaSGHKSJDGHKJSGHKSJGjHGJkSHgSHG",
+        tempdir.path().join("link2"),
+    )
+    .unwrap();
+
+    tempdir
 }
 
 /// Takes an async readable, goes through all its data discarding it,
@@ -204,25 +224,6 @@ pub mod funky_entry_data {
                     inner: Cursor::new(self.data),
                     delay: true,
                 }))
-            }
-        }
-    }
-
-    pub struct LazyReaderSizeFuture {
-        size: u64,
-        delay: bool,
-    }
-
-    impl Future for LazyReaderSizeFuture {
-        type Output = Result<u64>;
-
-        fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-            self.delay = !self.delay;
-            if !self.delay {
-                cx.waker().wake_by_ref();
-                Poll::Pending
-            } else {
-                Poll::Ready(Result::Ok(self.size))
             }
         }
     }
