@@ -1,7 +1,7 @@
 [package]
 name = "zippity"
 version = "0.3.0"
-edition = "2021"
+edition = "2024"
 repository = "https://github.com/bluecube/zippity"
 license = "MIT"
 description = "Library for asynchronously creating a ZIP file on the fly."
