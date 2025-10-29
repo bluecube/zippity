@@ -10,7 +10,7 @@ use futures_core::Stream;
 use pin_project::pin_project;
 use tokio_util::io::poll_read_buf;
 
-use crate::{entry_data::EntryData, reader::READ_SIZE, Reader};
+use crate::{Reader, entry_data::EntryData, reader::READ_SIZE};
 
 impl EntryData for Bytes {
     type Reader = Cursor<Bytes>;

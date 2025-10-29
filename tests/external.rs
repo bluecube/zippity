@@ -5,8 +5,8 @@ use tempfile::NamedTempFile;
 use test_strategy::proptest;
 use tokio::{fs::File, io, process::Command};
 use zippity::{
-    proptest::{ArbitraryTestEntryDataParams, TestEntryData},
     Reader,
+    proptest::{ArbitraryTestEntryDataParams, TestEntryData},
 };
 
 /// Runs a given command on a zipfile created from the given test data.

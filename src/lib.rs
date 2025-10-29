@@ -45,7 +45,9 @@ pub enum Error {
         expected_size: u64,
         actual_size: u64,
     },
-    #[error("Entry {entry_name} was given a CRC value {expected_crc:08x} that does not match the computed {actual_crc:08x}")]
+    #[error(
+        "Entry {entry_name} was given a CRC value {expected_crc:08x} that does not match the computed {actual_crc:08x}"
+    )]
     Crc32Mismatch {
         entry_name: String,
         expected_crc: u32,

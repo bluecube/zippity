@@ -1,11 +1,11 @@
 use crate::{bytes::BytesStream, entry_data::EntryData, reader::Reader};
 use actix_web::{
+    HttpRequest, HttpResponse,
     body::{BodySize, BoxBody, MessageBody},
     http::{
-        header::{ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, RANGE},
         StatusCode,
+        header::{ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, RANGE},
     },
-    HttpRequest, HttpResponse,
 };
 use bytes::Bytes;
 use futures_core::Stream;
@@ -14,7 +14,7 @@ use pin_project::{pin_project, pinned_drop};
 use std::{
     future::Future,
     pin::Pin,
-    task::{ready, Context, Poll},
+    task::{Context, Poll, ready},
 };
 
 pub type ActixWebAdapterWithoutCallback<D> =
@@ -212,10 +212,10 @@ where
 
 #[cfg(test)]
 mod test {
-    use actix_web::{body::MessageBody as _, http::header::RANGE, test, Responder};
+    use actix_web::{Responder, body::MessageBody as _, http::header::RANGE, test};
     use assert2::assert;
     use bytes::Bytes;
-    use futures_util::{stream::poll_fn, StreamExt};
+    use futures_util::{StreamExt, stream::poll_fn};
     use std::pin::pin;
     use test_strategy::proptest;
     use tokio::sync::oneshot;

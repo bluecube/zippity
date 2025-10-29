@@ -6,7 +6,7 @@ use indexmap::IndexMap;
 use test_strategy::proptest;
 use tokio::io::AsyncReadExt;
 use zip::ZipArchive;
-use zippity::{proptest::TestEntryData, Builder, EntryData};
+use zippity::{Builder, EntryData, proptest::TestEntryData};
 
 #[tokio::test]
 async fn empty_archive() {

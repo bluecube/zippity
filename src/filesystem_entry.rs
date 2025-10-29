@@ -6,13 +6,13 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
-    task::{ready, Context, Poll},
+    task::{Context, Poll, ready},
 };
 
 use assert2::{assert, debug_assert};
 use pin_project::pin_project;
 use tokio::{
-    fs::{read_dir, read_link, File},
+    fs::{File, read_dir, read_link},
     io::{AsyncRead, AsyncSeek, ReadBuf},
 };
 

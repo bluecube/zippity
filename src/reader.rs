@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::io::{Result, SeekFrom};
 use std::pin::Pin;
-use std::task::{ready, Context, Poll};
+use std::task::{Context, Poll, ready};
 
 use assert2::assert;
 use packed_struct::{PackedStruct, PackedStructSlice};
@@ -11,7 +11,7 @@ use tokio::io::{AsyncRead, AsyncSeek, ReadBuf};
 use crate::crc_reader::CrcReader;
 use crate::entry_data::EntryData;
 use crate::structs::PackedStructZippityExt;
-use crate::{structs, Error};
+use crate::{Error, structs};
 
 /// Minimum version needed to extract the zip64 extensions required by zippity
 pub const ZIP64_VERSION_TO_EXTRACT: u8 = 45;
@@ -503,9 +503,11 @@ impl ReadState {
                     }
                 }
             } else {
-                let pos_after_seek = ready!(file_reader
-                    .as_mut()
-                    .seek(ctx, SeekFrom::Start(self.to_skip)))?;
+                let pos_after_seek = ready!(
+                    file_reader
+                        .as_mut()
+                        .seek(ctx, SeekFrom::Start(self.to_skip))
+                )?;
                 assert!(pos_after_seek == self.to_skip);
                 self.chunk_processed_size += self.to_skip;
                 self.to_skip = 0;
@@ -520,15 +522,15 @@ impl ReadState {
 
             if file_reader.is_crc_valid() {
                 let actual_crc = file_reader.get_crc32();
-                if let Some(expected_crc) = entry.crc32 {
-                    if expected_crc != actual_crc {
-                        return Poll::Ready(Err(Error::Crc32Mismatch {
-                            entry_name: entry.name.clone(),
-                            expected_crc,
-                            actual_crc,
-                        }
-                        .into()));
+                if let Some(expected_crc) = entry.crc32
+                    && expected_crc != actual_crc
+                {
+                    return Poll::Ready(Err(Error::Crc32Mismatch {
+                        entry_name: entry.name.clone(),
+                        expected_crc,
+                        actual_crc,
                     }
+                    .into()));
                 }
                 entry.crc32 = Some(actual_crc);
             }
@@ -937,9 +939,9 @@ fn get_read_buf(vec: &mut Vec<u8>) -> ReadBuf<'_> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::Builder;
     use crate::proptest::TestEntryData;
     use crate::test_util::{funky_entry_data, measure_size, read_size_strategy, read_to_vec};
-    use crate::Builder;
     use assert2::assert;
     use bytes::Bytes;
     use futures_util::FutureExt;
@@ -1297,8 +1299,10 @@ mod test {
                 "Must clear the staging buffer if all data was read"
             );
         } else {
-            assert!(&rs.staging_buffer[rs.to_skip as usize..] == &test_data[stop..],
-            "What remains in the staging buffer after the skip must be what we didn't write from the test data");
+            assert!(
+                &rs.staging_buffer[rs.to_skip as usize..] == &test_data[stop..],
+                "What remains in the staging buffer after the skip must be what we didn't write from the test data"
+            );
         }
     }
 

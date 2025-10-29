@@ -3,7 +3,7 @@
 use std::{io::SeekFrom, ops::Deref, pin::pin, sync::Arc};
 
 use actix_test::TestServer;
-use actix_web::{web, App, Responder};
+use actix_web::{App, Responder, web};
 use assert2::assert;
 use async_http_range_reader::{AsyncHttpRangeReader, CheckSupportMethod};
 use bytes::Bytes;
@@ -13,8 +13,8 @@ use tokio::{
     sync::Mutex,
 };
 use zippity::{
-    proptest::{ReaderAndData, TestEntryData},
     Builder,
+    proptest::{ReaderAndData, TestEntryData},
 };
 
 struct TestApp {

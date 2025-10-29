@@ -2,11 +2,11 @@ use std::{
     future::{Future, Ready},
     io::{Cursor, Result},
     pin::Pin,
-    task::{ready, Context, Poll},
+    task::{Context, Poll, ready},
 };
 
 use pin_project::pin_project;
-use tokio::io::{empty, AsyncRead, AsyncSeek, Empty};
+use tokio::io::{AsyncRead, AsyncSeek, Empty, empty};
 use tokio_util::either::Either;
 
 pub trait EntryData {

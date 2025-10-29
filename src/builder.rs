@@ -10,10 +10,10 @@ use chrono::{Datelike, NaiveDateTime, TimeZone, Timelike};
 use indexmap::IndexMap;
 
 use crate::{
+    Error,
     entry_data::EntryData,
     reader::{Reader, ReaderEntry, Sizes},
     structs::{self, PackedStructZippityExt},
-    Error,
 };
 
 type TimeConverter = Rc<dyn Fn(SystemTime) -> (i32, u32, u32, u32, u32, u32)>;
@@ -497,8 +497,8 @@ mod test {
     use crate::proptest::TestEntryData;
 
     use super::*;
-    use assert2::assert;
     use assert_matches::assert_matches;
+    use assert2::assert;
     use bytes::Bytes;
     use structs::DosDatetime;
 
