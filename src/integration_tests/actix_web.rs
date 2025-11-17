@@ -1,7 +1,9 @@
-#![cfg(feature = "actix-web")]
-
 use std::{io::SeekFrom, ops::Deref, pin::pin, sync::Arc};
 
+use crate::{
+    Builder,
+    test_util::test_entry_data::{ReaderAndData, TestEntryData},
+};
 use actix_test::TestServer;
 use actix_web::{App, Responder, web};
 use assert2::assert;
@@ -11,10 +13,6 @@ use test_strategy::proptest;
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncSeekExt},
     sync::Mutex,
-};
-use zippity::{
-    Builder,
-    proptest::{ReaderAndData, TestEntryData},
 };
 
 struct TestApp {

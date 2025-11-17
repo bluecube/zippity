@@ -1,13 +1,13 @@
+use crate::{
+    Reader,
+    test_util::test_entry_data::{ArbitraryTestEntryDataParams, TestEntryData},
+};
 use assert2::assert;
 use core::panic;
 use std::{collections::HashMap, path::Path, pin::pin};
 use tempfile::NamedTempFile;
 use test_strategy::proptest;
 use tokio::{fs::File, io, process::Command};
-use zippity::{
-    Reader,
-    proptest::{ArbitraryTestEntryDataParams, TestEntryData},
-};
 
 /// Runs a given command on a zipfile created from the given test data.
 /// Panics if the command fails, returns its stdout if it succeds.

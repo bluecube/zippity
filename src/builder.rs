@@ -494,7 +494,7 @@ fn get_external_attributes(file_type: BuilderFileType, permissions: BuilderPermi
 
 #[cfg(test)]
 mod test {
-    use crate::proptest::TestEntryData;
+    use crate::test_util::test_entry_data::TestEntryData;
 
     use super::*;
     use assert_matches::assert_matches;

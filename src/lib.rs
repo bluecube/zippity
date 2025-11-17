@@ -11,15 +11,13 @@ mod structs;
 
 #[cfg(feature = "actix-web")]
 mod actix_web;
+#[cfg(feature = "bytes")]
+mod bytes;
 #[cfg(feature = "tokio-file")]
 mod filesystem_entry;
 
-#[cfg(feature = "bytes")]
-mod bytes;
-
-#[cfg(feature = "proptest")]
-pub mod proptest;
-
+#[cfg(test)]
+mod integration_tests;
 #[cfg(test)]
 mod test_util;
 

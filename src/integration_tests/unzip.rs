@@ -1,12 +1,12 @@
 use std::{collections::HashSet, pin::pin};
 
+use crate::{Builder, EntryData, test_util::test_entry_data::TestEntryData};
 use assert2::assert;
 use bytes::Bytes;
 use indexmap::IndexMap;
 use test_strategy::proptest;
 use tokio::io::AsyncReadExt;
 use zip::ZipArchive;
-use zippity::{Builder, EntryData, proptest::TestEntryData};
 
 #[tokio::test]
 async fn empty_archive() {

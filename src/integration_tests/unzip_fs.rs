@@ -1,4 +1,3 @@
-#![cfg(feature = "tokio-file")]
 use std::{
     collections::HashMap,
     fs,
@@ -7,6 +6,8 @@ use std::{
     pin::pin,
 };
 
+use crate::test_util::prepare_test_dir;
+use crate::{Builder, EntryData};
 use assert2::assert;
 use bytes::Bytes;
 use proptest::prelude::{Arbitrary, BoxedStrategy, Strategy};
@@ -14,7 +15,6 @@ use tempfile::TempDir;
 use test_strategy::proptest;
 use tokio::io::AsyncReadExt;
 use zip::ZipArchive;
-use zippity::{Builder, EntryData};
 
 /// Path entry, for generating arbitrary archive content
 #[derive(Debug, Clone)]
@@ -166,19 +166,4 @@ async fn build_and_open<T: EntryData>(builder: Builder<T>) -> ZipArchive<std::io
 
     assert!(size == (buf.len() as u64));
     ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip")
-}
-
-//TODO: Use the version from test_util.rs
-/// Creates a temp directory that contains a file a directory and a symlink.
-pub fn prepare_test_dir() -> TempDir {
-    let tempdir = TempDir::new().unwrap();
-
-    let dir_path = tempdir.path().join("dir");
-    fs::create_dir(&dir_path).unwrap();
-    let f_path = dir_path.join("file");
-    fs::write(&f_path, b"Hello world").unwrap();
-    std::os::unix::fs::symlink("dir/file", tempdir.path().join("link1")).unwrap();
-    std::os::unix::fs::symlink("/foo/bar", tempdir.path().join("link2")).unwrap();
-
-    tempdir
 }

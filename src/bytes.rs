@@ -105,8 +105,7 @@ mod test {
 
     use crate::{
         builder::Builder,
-        proptest::TestEntryData,
-        test_util::{read_size_strategy, read_to_vec},
+        test_util::{read_size_strategy, read_to_vec, test_entry_data::TestEntryData},
     };
 
     /// Test that the zip file comes out identical between &[u8] and Bytes

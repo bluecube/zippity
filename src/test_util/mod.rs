@@ -1,3 +1,5 @@
+pub mod test_entry_data;
+
 use assert2::assert;
 use proptest::strategy::Strategy;
 use std::pin::Pin;
@@ -44,13 +46,9 @@ pub fn prepare_test_dir() -> TempDir {
     let dir_path = tempdir.path().join("dir");
     fs::create_dir(&dir_path).unwrap();
     let f_path = dir_path.join("file");
-    fs::write(&f_path, b"Hello world\nohiofgHSOIasdagadgdagjhjkghsuhkjhkjhffoiweh89234upoisjvmoui90ujgpojfu0ujrujodijfsehfohaaaaaaaaaaaaaaaaaughkJGHohkljsddddddddddddddddddddddddd").unwrap();
+    fs::write(&f_path, b"Hello world").unwrap();
     std::os::unix::fs::symlink("dir/file", tempdir.path().join("link1")).unwrap();
-    std::os::unix::fs::symlink(
-        "/foo/barasdjksdhfkshiguhuidghSHGkushgikSHGKSghKSGhkSJDGHKaaaaaaaaaaaaaaahiofgHSOIGHihIOGhidfaaaaaaaaaaaaaaasdagadgdagjhjkghsuhkjhkjhffoiweh89234upoisjvmoui90ujgpojfu0ujrujodijfsehfohaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaughkJGHohkljsdddddddddddddddddddddddddddddddddddddddddaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaSGHKSJDGHKJSGHKSJGjHGJkSHgSHG",
-        tempdir.path().join("link2"),
-    )
-    .unwrap();
+    std::os::unix::fs::symlink("/foo/bar", tempdir.path().join("link2")).unwrap();
 
     tempdir
 }

@@ -258,8 +258,10 @@ mod test {
 
     use super::*;
 
-    use crate::proptest::{ArbitraryTestEntryDataParams, TestEntryData};
-    use crate::test_util::read_to_vec;
+    use crate::test_util::{
+        read_to_vec,
+        test_entry_data::{ArbitraryTestEntryDataParams, TestEntryData},
+    };
 
     use assert2::assert;
     use std::pin::pin;

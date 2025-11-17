@@ -940,7 +940,7 @@ fn get_read_buf(vec: &mut Vec<u8>) -> ReadBuf<'_> {
 mod test {
     use super::*;
     use crate::Builder;
-    use crate::proptest::TestEntryData;
+    use crate::test_util::test_entry_data::{ArbitraryReaderParams, TestEntryData};
     use crate::test_util::{funky_entry_data, measure_size, read_size_strategy, read_to_vec};
     use assert2::assert;
     use bytes::Bytes;
@@ -1788,8 +1788,7 @@ mod test {
     /// Test that taking a reader empties the source and returns the original data.
     #[proptest(async = "tokio")]
     async fn take_pinned(
-        #[any(crate::proptest::ArbitraryReaderParams { seek: true, ..Default::default()})]
-        reader: Reader<Bytes>,
+        #[any(ArbitraryReaderParams { seek: true, ..Default::default()})] reader: Reader<Bytes>,
     ) {
         let size = reader.size();
         let pos = reader.tell();
