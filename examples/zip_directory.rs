@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use chrono;
 use clap::Parser;
 use tokio::{fs::File, io};
 use zippity::Builder;

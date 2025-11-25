@@ -685,7 +685,7 @@ mod test {
 
         builder.system_time_timezone(timezone);
 
-        let chrono_datetime = chrono::NaiveDate::from_ymd_opt(2025, 02, 02)
+        let chrono_datetime = chrono::NaiveDate::from_ymd_opt(2025, 2, 2)
             .unwrap()
             .and_hms_opt(17, 0, 0)
             .unwrap()
