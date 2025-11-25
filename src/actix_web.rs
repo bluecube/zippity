@@ -12,58 +12,45 @@ use futures_core::Stream;
 use http_range_header::parse_range_header;
 use pin_project::{pin_project, pinned_drop};
 use std::{
-    future::Future,
     pin::Pin,
     task::{Context, Poll, ready},
 };
-
-pub type ActixWebAdapterWithoutCallback<D> =
-    ActixWebAdapter<D, fn(Reader<D>) -> std::future::Ready<()>, std::future::Ready<()>>;
+use tokio::sync::oneshot;
 
 impl<D: EntryData> Reader<D> {
     /// Wraps this reader into a struct that can be used as a return value from an Actix-web handler.
-    pub fn into_responder(self) -> ActixWebAdapterWithoutCallback<D> {
+    pub fn into_responder(self) -> ActixWebAdapter<D> {
         ActixWebAdapter {
-            inner: BytesStreamAndCallback {
+            inner: Inner {
                 bytes_stream: self.into_bytes_stream(),
-                callback: None,
+                drop_channel: None,
             },
         }
     }
 
     /// Wraps this reader into a struct that can be used as a return value from an Actix-web handler.
-    ///
-    /// The callback specified is called when the wrapper is dropped, in a freshly spawned tokio task.
-    /// The argument to the callback is a new reader equivalent to the original wrapped reader (see [Reader::take_pinned()]).
-    pub fn into_responder_with_callback<Cb, Fut>(self, callback: Cb) -> ActixWebAdapter<D, Cb, Fut>
-    where
-        Cb: FnOnce(Reader<D>) -> Fut,
-        Fut: Future<Output = ()> + Send + 'static,
-    {
-        ActixWebAdapter {
-            inner: BytesStreamAndCallback {
+    /// Also returns a oneshot channel receiver that receives a Reader remaining state after the actix web adapter
+    /// is dropped.
+    /// This is useful to retrieve calculated CRCs after the zip file is served.
+    /// See Reader::take_pinned(), Reader::crc32s()
+    pub fn into_responder_with_channel(self) -> (ActixWebAdapter<D>, oneshot::Receiver<Reader<D>>) {
+        let (sender, receiver) = oneshot::channel();
+        let adapter = ActixWebAdapter {
+            inner: Inner {
                 bytes_stream: self.into_bytes_stream(),
-                callback: Some(callback),
+                drop_channel: Some(sender),
             },
-        }
+        };
+
+        (adapter, receiver)
     }
 }
 
-pub struct ActixWebAdapter<D, Cb, Fut>
-where
-    D: EntryData + 'static,
-    Cb: FnOnce(Reader<D>) -> Fut + 'static,
-    Fut: Future<Output = ()> + Send + 'static,
-{
-    inner: BytesStreamAndCallback<D, Cb, Fut>,
+pub struct ActixWebAdapter<D: EntryData + 'static> {
+    inner: Inner<D>,
 }
 
-impl<D, Cb, Fut> actix_web::Responder for ActixWebAdapter<D, Cb, Fut>
-where
-    D: EntryData + 'static,
-    Cb: FnOnce(Reader<D>) -> Fut + 'static,
-    Fut: Future<Output = ()> + Send + 'static,
-{
+impl<D: EntryData + 'static> actix_web::Responder for ActixWebAdapter<D> {
     type Body = BoxBody;
 
     fn respond_to(mut self, req: &HttpRequest) -> HttpResponse<Self::Body> {
@@ -117,55 +104,44 @@ where
 }
 
 #[pin_project(PinnedDrop)]
-struct BytesStreamAndCallback<D, Cb, Fut>
+struct Inner<D>
 where
     D: EntryData + 'static,
-    Cb: FnOnce(Reader<D>) -> Fut,
-    Fut: Future<Output = ()> + Send + 'static,
 {
     #[pin]
     bytes_stream: BytesStream<D>,
-    callback: Option<Cb>,
+    drop_channel: Option<oneshot::Sender<Reader<D>>>,
 }
 
 #[pinned_drop]
-impl<D, Cb, Fut> PinnedDrop for BytesStreamAndCallback<D, Cb, Fut>
+impl<D> PinnedDrop for Inner<D>
 where
     D: EntryData + 'static,
-    Cb: FnOnce(Reader<D>) -> Fut,
-    Fut: Future<Output = ()> + Send + 'static,
 {
     fn drop(self: Pin<&mut Self>) {
         let projected = self.project();
-        let Some(callback) = projected.callback.take() else {
+        let Some(drop_channel) = projected.drop_channel.take() else {
             return;
         };
+
+        // Extract the remaining state of the reader
         let extracted = projected.bytes_stream.reader_pin_mut().take_pinned();
-        let fut = (callback)(extracted);
-        tokio::spawn(fut);
+
+        // Send the channel, ignoring if the other side already hung up
+        let _ = drop_channel.send(extracted);
     }
 }
 
 #[pin_project]
-pub struct Body<D, Cb, Fut>
-where
-    D: EntryData + 'static,
-    Cb: FnOnce(Reader<D>) -> Fut,
-    Fut: Future<Output = ()> + Send + 'static,
-{
+pub struct Body<D: EntryData + 'static> {
     #[pin]
-    inner: BytesStreamAndCallback<D, Cb, Fut>,
+    inner: Inner<D>,
     size: u64,
     remaining: u64,
 }
 
-impl<D, Cb, Fut> Body<D, Cb, Fut>
-where
-    D: EntryData + 'static,
-    Cb: FnOnce(Reader<D>) -> Fut,
-    Fut: Future<Output = ()> + Send + 'static,
-{
-    fn new(inner: BytesStreamAndCallback<D, Cb, Fut>, size: u64) -> Self {
+impl<D: EntryData + 'static> Body<D> {
+    fn new(inner: Inner<D>, size: u64) -> Self {
         Body {
             inner,
             size,
@@ -174,12 +150,7 @@ where
     }
 }
 
-impl<D, Cb, Fut> MessageBody for Body<D, Cb, Fut>
-where
-    D: EntryData + 'static,
-    Cb: FnOnce(Reader<D>) -> Fut,
-    Fut: Future<Output = ()> + Send + 'static,
-{
+impl<D: EntryData + 'static> MessageBody for Body<D> {
     type Error = std::io::Error;
 
     fn size(&self) -> BodySize {
@@ -222,7 +193,7 @@ mod test {
 
     use crate::{Builder, BytesStream, Reader};
 
-    use super::{Body, BytesStreamAndCallback};
+    use super::{Body, Inner};
 
     #[tokio::test]
     // Test the headers are set as expected when requesting the zip file without range header.
@@ -281,28 +252,18 @@ mod test {
     #[proptest(async = "tokio")]
     async fn reader_and_callback_spawns_callback(reader: Reader<Bytes>) {
         let size = reader.size();
-        let (tx1, rx1) = oneshot::channel();
-        let (tx2, rx2) = oneshot::channel();
+        let (tx, mut rx) = oneshot::channel();
 
-        async fn callback(
-            remaining_reader: Reader<Bytes>,
-            rx1: oneshot::Receiver<()>,
-            tx2: oneshot::Sender<u64>,
-        ) {
-            rx1.await.unwrap();
-            tx2.send(remaining_reader.size()).unwrap();
-        }
-
-        let bsac = BytesStreamAndCallback {
+        let bsac = Inner {
             bytes_stream: BytesStream::new(reader),
-            callback: Some(|remaining_reader: Reader<Bytes>| callback(remaining_reader, rx1, tx2)),
+            drop_channel: Some(tx),
         };
 
+        assert!(rx.try_recv().is_err());
         drop(bsac);
+        let remaining_reader = rx.await.unwrap();
 
-        tx1.send(()).unwrap();
-        let remaining_reader_size = rx2.await.unwrap();
-        assert!(remaining_reader_size == size);
+        assert!(remaining_reader.size() == size);
     }
 
     #[proptest(async = "tokio")]

@@ -31,13 +31,19 @@ async fn download_zip_yes_callback(data: web::Data<TestApp>) -> impl Responder {
     let app = Arc::clone(data.deref());
     let builder: Builder<_> = app.entry_data.clone().into();
     let reader = builder.build();
+    let reader_size = reader.size();
 
-    async fn callback(app: Arc<TestApp>) {
+    let (responder, channel) = reader.into_responder_with_channel();
+
+    tokio::spawn(async move {
+        let extracted_reader = channel
+            .await
+            .expect("The responder must send the reader on drop");
+        assert!(extracted_reader.size() == reader_size);
         let mut locked = app.callback_counter.lock().await;
         *locked += 1;
-    }
-
-    reader.into_responder_with_callback(move |_reader| callback(app.clone()))
+    });
+    responder
 }
 
 async fn read_to_vec(reader: impl AsyncRead) -> std::io::Result<Vec<u8>> {
