@@ -69,6 +69,48 @@ pub async fn measure_size(mut reader: Pin<&mut impl AsyncRead>) -> Result<u64> {
     }
 }
 
+/// Helper functions for working with EntryReader
+pub mod entry_reader {
+    use std::{future::poll_fn, pin::Pin};
+    use tokio::io::ReadBuf;
+    use std::io::Result;
+
+    use crate::entry_data::EntryReader;
+
+    /// Collects all data from an EntryReader to a Vec.
+    /// Size of each read can be specified.
+    pub async fn read_to_vec<D, R: EntryReader<D>>(
+        mut reader: Pin<&mut R>,
+        data: &D,
+        read_size: usize,
+    ) -> Result<Vec<u8>> {
+        let mut buffer = Vec::new();
+
+        loop {
+            let size_before = buffer.len();
+            buffer.resize(size_before + read_size, 0);
+            let write_slice = &mut buffer[size_before..];
+
+            let mut read_buf = ReadBuf::new(write_slice);
+            poll_fn(|cx| reader.as_mut().poll_read(data, cx, &mut read_buf)).await?;
+
+            let size_read = read_buf.filled().len();
+            buffer.truncate(size_before + size_read);
+
+            if size_read == 0 {
+                return Ok(buffer);
+            }
+        }
+    }
+
+    /// Goes through all data from an EntryReader, discarding it,
+    /// and returns the total number of bytes.
+    pub async fn measure_size<D, R: EntryReader<D>>(reader: Pin<&mut R>, data: &D) -> Result<u64> {
+        let vec = read_to_vec(reader, data, 8192).await?;
+        Ok(vec.len() as u64)
+    }
+}
+
 pub mod funky_entry_data {
     use pin_project::pin_project;
     use std::{

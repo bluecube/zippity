@@ -104,7 +104,11 @@ impl<D: EntryData> ReaderEntry<D> {
         loop {
             read_buffer.clear();
             assert!(read_buffer.filled().is_empty());
-            ready!(file_reader.as_mut().poll_read(ctx, &mut read_buffer))?;
+            ready!(
+                file_reader
+                    .as_mut()
+                    .poll_read(&self.data, ctx, &mut read_buffer)
+            )?;
             if read_buffer.filled().is_empty() {
                 break;
             }
@@ -491,7 +495,11 @@ impl ReadState {
                     let mut read_buffer = read_buffer.take(limit);
 
                     assert!(read_buffer.filled().is_empty());
-                    ready!(file_reader.as_mut().poll_read(ctx, &mut read_buffer))?;
+                    ready!(
+                        file_reader
+                            .as_mut()
+                            .poll_read(&entry.data, ctx, &mut read_buffer)
+                    )?;
 
                     self.chunk_processed_size += read_buffer.filled().len() as u64;
                     self.to_skip -= read_buffer.filled().len() as u64;
@@ -503,11 +511,11 @@ impl ReadState {
                     }
                 }
             } else {
-                let pos_after_seek = ready!(
-                    file_reader
-                        .as_mut()
-                        .seek(ctx, SeekFrom::Start(self.to_skip))
-                )?;
+                let pos_after_seek = ready!(file_reader.as_mut().seek(
+                    &entry.data,
+                    ctx,
+                    SeekFrom::Start(self.to_skip)
+                ))?;
                 assert!(pos_after_seek == self.to_skip);
                 self.chunk_processed_size += self.to_skip;
                 self.to_skip = 0;
@@ -515,7 +523,7 @@ impl ReadState {
         }
 
         let remaining_before_poll = output.remaining();
-        ready!(file_reader.as_mut().poll_read(ctx, output))?;
+        ready!(file_reader.as_mut().poll_read(&entry.data, ctx, output))?;
 
         if output.remaining() == remaining_before_poll {
             // Nothing was output => we read everything in the file already
