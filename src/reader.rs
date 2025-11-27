@@ -1342,9 +1342,11 @@ mod test {
     /// only verifies that the expected and actual sizes match.
     #[tokio::test]
     async fn zip64_count() {
-        let mut builder = Builder::<()>::new();
+        let mut builder = Builder::<&[u8]>::new();
         for i in 0..0x10001 {
-            builder.add_entry(format!("Empty file {}", i), ()).unwrap();
+            builder
+                .add_entry(format!("Empty file {}", i), b"".as_ref())
+                .unwrap();
         }
         let zippity = pin!(builder.build());
 
@@ -1511,7 +1513,7 @@ mod test {
     /// Test that seeking to a negative location results in an error.
     #[proptest(async = "tokio")]
     async fn seeking_before_start(distance: u8) {
-        let mut reader = pin!(Builder::<()>::new().build());
+        let mut reader = pin!(Builder::<&[u8]>::new().build());
         let seek_offset = -(distance as i64) - 1;
         let err = reader
             .seek(SeekFrom::Current(seek_offset))
@@ -1527,7 +1529,7 @@ mod test {
     /// Test that seeking to a valid location in a zip file using SeekFrom::Start works as expected
     #[proptest(async = "tokio")]
     async fn seeking_after_end_from_start(distance: u8) {
-        let mut reader = pin!(Builder::<()>::new().build());
+        let mut reader = pin!(Builder::<&[u8]>::new().build());
         let seek_pos = reader.size() + distance as u64;
         let reported_position = reader.seek(SeekFrom::Start(seek_pos)).await.unwrap();
         assert!(reported_position == seek_pos);
@@ -1539,7 +1541,7 @@ mod test {
     /// Test that seeking to a valid location in a zip file using SeekFrom::Start works as expected
     #[proptest(async = "tokio")]
     async fn seeking_after_end_from_current(distance: u8) {
-        let mut reader = pin!(Builder::<()>::new().build());
+        let mut reader = pin!(Builder::<&[u8]>::new().build());
         let seek_position = reader.size() as i64 + distance as i64;
         let reported_position = reader.seek(SeekFrom::Current(seek_position)).await.unwrap();
         assert!(reported_position == seek_position as u64);

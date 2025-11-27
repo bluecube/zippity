@@ -1,6 +1,5 @@
 use std::{
-    future::Ready,
-    io::{Cursor, Result},
+    io::Result,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -11,19 +10,6 @@ use pin_project::pin_project;
 use tokio_util::io::poll_read_buf;
 
 use crate::{Reader, entry_data::EntryData, reader::READ_SIZE};
-
-impl EntryData for Bytes {
-    type Reader = Cursor<Bytes>;
-    type Future = Ready<Result<Self::Reader>>;
-
-    fn get_reader(&self) -> Self::Future {
-        std::future::ready(Ok(Cursor::new(self.clone())))
-    }
-
-    fn size(&self) -> u64 {
-        self.len() as u64
-    }
-}
 
 #[derive(Clone, Debug)]
 #[pin_project]

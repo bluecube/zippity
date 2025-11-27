@@ -10,14 +10,14 @@ use zip::ZipArchive;
 
 #[tokio::test]
 async fn empty_archive() {
-    let unpacked = build_and_open(Builder::<()>::new()).await;
+    let unpacked = build_and_open(Builder::<&[u8]>::new()).await;
     assert!(unpacked.is_empty());
 }
 
 #[tokio::test]
 async fn empty_entry_name() {
-    let mut builder: Builder<()> = Builder::new();
-    builder.add_entry(String::new(), ()).unwrap();
+    let mut builder: Builder<&[u8]> = Builder::new();
+    builder.add_entry(String::new(), b"".as_ref()).unwrap();
 
     let mut unpacked = build_and_open(builder).await;
     assert!(unpacked.len() == 1);
@@ -93,10 +93,10 @@ async fn any_archive(content: TestEntryData) {
 async fn entry_ordering(entry_names: HashSet<String>) {
     let entry_names: Vec<_> = entry_names.into_iter().collect(); // Fix the order of the input
 
-    let mut builder = Builder::<()>::new();
+    let mut builder = Builder::<&[u8]>::new();
 
     for name in entry_names.iter() {
-        builder.add_entry(name.clone(), ()).unwrap();
+        builder.add_entry(name.clone(), b"".as_ref()).unwrap();
     }
 
     let mut unpacked = build_and_open(builder).await;
@@ -120,10 +120,10 @@ async fn file_modification_time(
     #[strategy(0u32..=59u32)] minute: u32,
     #[strategy(0u32..=59u32)] second: u32,
 ) {
-    let mut builder: Builder<()> = Builder::new();
+    let mut builder: Builder<&[u8]> = Builder::new();
 
     builder
-        .add_entry("X".into(), ())
+        .add_entry("X".into(), b"".as_ref())
         .unwrap()
         .datetime_fields(year, month, day, hour, minute, second)
         .unwrap();
@@ -144,9 +144,9 @@ async fn file_modification_time(
 
 #[tokio::test]
 async fn regular_file_default_permissions() {
-    let mut builder: Builder<()> = Builder::new();
+    let mut builder: Builder<&[u8]> = Builder::new();
 
-    builder.add_entry("X".into(), ()).unwrap();
+    builder.add_entry("X".into(), b"".as_ref()).unwrap();
 
     let mut unpacked = build_and_open(builder).await;
 
@@ -159,9 +159,12 @@ async fn regular_file_default_permissions() {
 
 #[tokio::test]
 async fn directory_default_permissions() {
-    let mut builder: Builder<()> = Builder::new();
+    let mut builder: Builder<&[u8]> = Builder::new();
 
-    builder.add_entry("X".into(), ()).unwrap().directory();
+    builder
+        .add_entry("X".into(), b"".as_ref())
+        .unwrap()
+        .directory();
 
     let mut unpacked = build_and_open(builder).await;
 
@@ -174,10 +177,10 @@ async fn directory_default_permissions() {
 
 #[tokio::test]
 async fn regular_file_override_permissions() {
-    let mut builder: Builder<()> = Builder::new();
+    let mut builder: Builder<&[u8]> = Builder::new();
 
     builder
-        .add_entry("X".into(), ())
+        .add_entry("X".into(), b"".as_ref())
         .unwrap()
         .unix_permissions(0o123);
 
@@ -192,10 +195,10 @@ async fn regular_file_override_permissions() {
 
 #[tokio::test]
 async fn directory_override_permissions() {
-    let mut builder: Builder<()> = Builder::new();
+    let mut builder: Builder<&[u8]> = Builder::new();
 
     builder
-        .add_entry("X".into(), ())
+        .add_entry("X".into(), b"".as_ref())
         .unwrap()
         .directory()
         .unix_permissions(0o123);
@@ -211,10 +214,10 @@ async fn directory_override_permissions() {
 
 #[tokio::test]
 async fn readonly_file_permissions() {
-    let mut builder: Builder<()> = Builder::new();
+    let mut builder: Builder<&[u8]> = Builder::new();
 
     builder
-        .add_entry("ro_file".into(), ())
+        .add_entry("ro_file".into(), b"".as_ref())
         .unwrap()
         .readonly(true);
 
@@ -230,10 +233,10 @@ async fn readonly_file_permissions() {
 
 #[tokio::test]
 async fn readonly_directory_permissions() {
-    let mut builder: Builder<()> = Builder::new();
+    let mut builder: Builder<&[u8]> = Builder::new();
 
     builder
-        .add_entry("ro_dir".into(), ())
+        .add_entry("ro_dir".into(), b"".as_ref())
         .unwrap()
         .directory()
         .readonly(true);
@@ -250,10 +253,10 @@ async fn readonly_directory_permissions() {
 
 #[tokio::test]
 async fn symlink_permissions() {
-    let mut builder: Builder<()> = Builder::new();
+    let mut builder: Builder<&[u8]> = Builder::new();
 
     builder
-        .add_entry("X".into(), ())
+        .add_entry("X".into(), b"".as_ref())
         .unwrap()
         .symlink()
         .unix_permissions(0o123); // Will get overridden

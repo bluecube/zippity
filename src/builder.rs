@@ -515,10 +515,12 @@ mod test {
 
     #[tokio::test]
     async fn too_long_enty_name() {
-        let mut builder: Builder<()> = Builder::new();
+        let mut builder: Builder<&[u8]> = Builder::new();
 
         let name_length = u16::MAX as usize + 1;
-        let e = builder.add_entry("X".repeat(name_length), ()).unwrap_err();
+        let e = builder
+            .add_entry("X".repeat(name_length), b"".as_ref())
+            .unwrap_err();
         assert_matches!(e, Error::TooLongEntryName { entry_name } if entry_name.len() == name_length);
     }
 
@@ -565,16 +567,16 @@ mod test {
         }
     }
 
-    fn datetime_fields(entry: &mut BuilderEntry<()>, year: i32, is_some: bool) {
+    fn datetime_fields(entry: &mut BuilderEntry<&[u8]>, year: i32, is_some: bool) {
         assert!(entry.datetime_fields(year, 1, 1, 1, 1, 1).is_some() == is_some);
     }
 
-    fn datetime_fields_or_default(entry: &mut BuilderEntry<()>, year: i32, _is_some: bool) {
+    fn datetime_fields_or_default(entry: &mut BuilderEntry<&[u8]>, year: i32, _is_some: bool) {
         entry.datetime_fields_or_default(year, 1, 1, 1, 1, 1);
     }
 
     #[cfg(feature = "chrono")]
-    fn datetime(entry: &mut BuilderEntry<()>, year: i32, is_some: bool) {
+    fn datetime(entry: &mut BuilderEntry<&[u8]>, year: i32, is_some: bool) {
         let chrono_datetime = chrono::NaiveDate::from_ymd_opt(year, 1, 1)
             .unwrap()
             .and_hms_opt(1, 1, 1)
@@ -583,7 +585,7 @@ mod test {
     }
 
     #[cfg(feature = "chrono")]
-    fn datetime_or_default(entry: &mut BuilderEntry<()>, year: i32, _is_some: bool) {
+    fn datetime_or_default(entry: &mut BuilderEntry<&[u8]>, year: i32, _is_some: bool) {
         let chrono_datetime = chrono::NaiveDate::from_ymd_opt(year, 1, 1)
             .unwrap()
             .and_hms_opt(1, 1, 1)
@@ -591,12 +593,12 @@ mod test {
         entry.datetime_or_default(chrono_datetime);
     }
 
-    fn datetime_system(entry: &mut BuilderEntry<()>, year: i32, is_some: bool) {
+    fn datetime_system(entry: &mut BuilderEntry<&[u8]>, year: i32, is_some: bool) {
         entry.time_converter = Some(Rc::new(move |_| (year, 1, 1, 1, 1, 1)));
         assert!(entry.datetime_system(UNIX_EPOCH).is_some() == is_some);
     }
 
-    fn datetime_system_or_default(entry: &mut BuilderEntry<()>, year: i32, _is_some: bool) {
+    fn datetime_system_or_default(entry: &mut BuilderEntry<&[u8]>, year: i32, _is_some: bool) {
         entry.time_converter = Some(Rc::new(move |_| (year, 1, 1, 1, 1, 1)));
         entry.datetime_system_or_default(UNIX_EPOCH);
     }
@@ -621,10 +623,10 @@ mod test {
         ],
         [2024, 1000]
     ))]
-    fn datetime_test(setter_fn: impl FnOnce(&mut BuilderEntry<()>, i32, bool), year: i32) {
+    fn datetime_test(setter_fn: impl FnOnce(&mut BuilderEntry<&[u8]>, i32, bool), year: i32) {
         let is_some = year >= 1980;
 
-        let mut entry = BuilderEntry::new((), None);
+        let mut entry = BuilderEntry::new(b"".as_ref(), None);
 
         setter_fn(&mut entry, year, is_some);
 
@@ -651,7 +653,7 @@ mod test {
             unreachable!();
         };
 
-        let mut entry1 = BuilderEntry::new((), None);
+        let mut entry1 = BuilderEntry::new(b"".as_ref(), None);
         let mut entry2 = entry1.clone();
 
         entry1.datetime_fields(year, month, day, hour, minute, second);
@@ -662,15 +664,15 @@ mod test {
 
     #[test]
     fn system_time_conversion_comes_from_builder() {
-        let mut builder: Builder<()> = Builder::new();
+        let mut builder: Builder<&[u8]> = Builder::new();
         builder.system_time_converter(|_| (2000, 1, 2, 3, 4, 5));
 
-        let x: &BuilderEntry<()> = builder
-            .add_entry("X".into(), ())
+        let x: &BuilderEntry<&[u8]> = builder
+            .add_entry("X".into(), b"".as_ref())
             .unwrap()
             .datetime_system(SystemTime::UNIX_EPOCH)
             .unwrap();
-        let mut y = BuilderEntry::new((), None);
+        let mut y = BuilderEntry::new(b"", None);
         y.datetime_fields(2000, 1, 2, 3, 4, 5).unwrap();
 
         assert!(x.datetime == y.datetime);
@@ -681,7 +683,7 @@ mod test {
     fn system_time_timezeone(#[strategy(-5..=5)] offset: i32) {
         let timezone = FixedOffset::east_opt(offset).unwrap();
 
-        let mut builder: Builder<()> = Builder::new();
+        let mut builder: Builder<&[u8]> = Builder::new();
 
         builder.system_time_timezone(timezone);
 
@@ -706,7 +708,7 @@ mod test {
 
     #[test]
     fn unix_permissions_masking() {
-        let mut entry = BuilderEntry::new((), None);
+        let mut entry = BuilderEntry::new(b"".as_ref(), None);
         entry.unix_permissions(0o123456);
 
         assert!(entry.permissions == BuilderPermissions::UnixPermissions(0o456));
@@ -722,7 +724,7 @@ mod test {
 
         #[test]
         fn readonly() {
-            let mut entry = BuilderEntry::new((), None);
+            let mut entry = BuilderEntry::new(b"".as_ref(), None);
             assert!(entry.permissions == BuilderPermissions::Rw);
             entry.readonly(true);
             assert!(entry.permissions == BuilderPermissions::Ro);
@@ -732,7 +734,7 @@ mod test {
 
         #[proptest]
         fn unix_permissions(#[strategy(0u32..0o777u32)] permissions: u32) {
-            let mut entry = BuilderEntry::new((), None);
+            let mut entry = BuilderEntry::new(b"".as_ref(), None);
             entry.unix_permissions(permissions);
             assert!(entry.permissions == BuilderPermissions::UnixPermissions(permissions));
         }
@@ -745,7 +747,7 @@ mod test {
             fs::write(&path, b"hello world").unwrap();
             let metadata = fs::symlink_metadata(path).unwrap();
 
-            let mut entry = BuilderEntry::new((), None);
+            let mut entry = BuilderEntry::new(b"".as_ref(), None);
             entry.metadata(&metadata);
             assert!(entry.file_type == BuilderFileType::File);
         }
@@ -758,7 +760,7 @@ mod test {
             fs::create_dir(&path).unwrap();
             let metadata = fs::symlink_metadata(path).unwrap();
 
-            let mut entry = BuilderEntry::new((), None);
+            let mut entry = BuilderEntry::new(b"".as_ref(), None);
             entry.metadata(&metadata);
             assert!(entry.file_type == BuilderFileType::Directory);
         }
@@ -774,7 +776,7 @@ mod test {
             dbg!(&path2);
             let metadata = fs::symlink_metadata(path2).unwrap();
 
-            let mut entry = BuilderEntry::new((), None);
+            let mut entry = BuilderEntry::new(b"".as_ref(), None);
             entry.metadata(&metadata);
             assert!(entry.file_type == BuilderFileType::Symlink);
         }
@@ -792,7 +794,7 @@ mod test {
             fs::set_permissions(&path, p).unwrap();
             let metadata = fs::symlink_metadata(path).unwrap();
 
-            let mut entry = BuilderEntry::new((), None);
+            let mut entry = BuilderEntry::new(b"".as_ref(), None);
             entry.permissions(&metadata.permissions());
             assert!(entry.permissions == BuilderPermissions::UnixPermissions(permissions));
         }
@@ -808,7 +810,7 @@ mod test {
             fs::set_permissions(&path, p).unwrap();
             let metadata = fs::symlink_metadata(path).unwrap();
 
-            let mut entry = BuilderEntry::new((), None);
+            let mut entry = BuilderEntry::new(b"".as_ref(), None);
             entry.permissions(&metadata.permissions());
 
             let expected = if readonly { 0o444 } else { 0o666 };
@@ -828,7 +830,8 @@ mod test {
             fs::write(&path, b"hello world").unwrap();
             let metadata = fs::symlink_metadata(path).unwrap();
 
-            let mut entry1 = BuilderEntry::new((), Some(Rc::new(system_timezone_converter(Utc))));
+            let mut entry1 =
+                BuilderEntry::new(b"".as_ref(), Some(Rc::new(system_timezone_converter(Utc))));
             let mut entry2 = entry1.clone();
 
             entry1.metadata(&metadata);
@@ -851,7 +854,8 @@ mod test {
             let creation_time = SystemTime::now();
             let metadata = fs::symlink_metadata(path).unwrap();
 
-            let mut entry = BuilderEntry::new((), Some(Rc::new(system_timezone_converter(Utc))));
+            let mut entry =
+                BuilderEntry::new(b"".as_ref(), Some(Rc::new(system_timezone_converter(Utc))));
             entry.metadata(&metadata);
 
             let entry_datetime = entry.datetime.expect("Entry must have the datetime set");

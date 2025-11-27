@@ -71,11 +71,52 @@ pub async fn measure_size(mut reader: Pin<&mut impl AsyncRead>) -> Result<u64> {
 
 /// Helper functions for working with EntryReader
 pub mod entry_reader {
-    use std::{future::poll_fn, pin::Pin};
-    use tokio::io::ReadBuf;
     use std::io::Result;
+    use std::{future::poll_fn, io::SeekFrom, pin::Pin};
+    use tokio::io::ReadBuf;
 
     use crate::entry_data::EntryReader;
+
+    /// Reads from an EntryReader into a buffer (similar to AsyncReadExt::read)
+    pub async fn read<D, R: EntryReader<D>>(
+        mut reader: Pin<&mut R>,
+        data: &D,
+        buf: &mut [u8],
+    ) -> Result<usize> {
+        let mut read_buf = ReadBuf::new(buf);
+        poll_fn(|cx| reader.as_mut().poll_read(data, cx, &mut read_buf)).await?;
+        Ok(read_buf.filled().len())
+    }
+
+    /// Reads exact bytes from an EntryReader (similar to AsyncReadExt::read_exact)
+    pub async fn read_exact<D, R: EntryReader<D>>(
+        mut reader: Pin<&mut R>,
+        data: &D,
+        buf: &mut [u8],
+    ) -> Result<()> {
+        let mut filled = 0;
+        while filled < buf.len() {
+            let n = read(reader.as_mut(), data, &mut buf[filled..]).await?;
+            if n == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "failed to fill whole buffer",
+                ));
+            }
+            filled += n;
+        }
+        Ok(())
+    }
+
+    /// Seeks within an EntryReader (similar to AsyncSeekExt::seek)
+    pub async fn seek<D, R: EntryReader<D>>(
+        mut reader: Pin<&mut R>,
+        data: &D,
+        pos: SeekFrom,
+    ) -> Result<u64> {
+        reader.as_mut().start_seek(data, pos)?;
+        poll_fn(|cx| reader.as_mut().poll_seek_complete(data, cx)).await
+    }
 
     /// Collects all data from an EntryReader to a Vec.
     /// Size of each read can be specified.
@@ -91,10 +132,8 @@ pub mod entry_reader {
             buffer.resize(size_before + read_size, 0);
             let write_slice = &mut buffer[size_before..];
 
-            let mut read_buf = ReadBuf::new(write_slice);
-            poll_fn(|cx| reader.as_mut().poll_read(data, cx, &mut read_buf)).await?;
+            let size_read = read(reader.as_mut(), data, write_slice).await?;
 
-            let size_read = read_buf.filled().len();
             buffer.truncate(size_before + size_read);
 
             if size_read == 0 {
