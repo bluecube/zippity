@@ -62,6 +62,6 @@ See #1.
 | Name | Description | Default |
 | ---- | ----------- | ------- |
 | `tokio-file` | Adds support for `FilesystemEntry` being used as a entry data, based on `Tokio::File`. | yes |
-| `bytes` | Implement `EntryData` for `bytes::Bytes`, and provide method `into_bytes_stream()` for `Reader`. | no |
+| `bytes` | Provide method `Bytes::into_bytes_stream()`. | no |
 | `actix-web` | Adds`actix_web::Reponder` implementation to `zippity::Reader` | no |
 | `chrono` | Support for setting last modification date and time metadata using types from `chrono`. | no |
