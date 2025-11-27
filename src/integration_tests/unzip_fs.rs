@@ -3,17 +3,14 @@ use std::{
     fs,
     io::{self, Read},
     path::Path,
-    pin::pin,
 };
 
-use crate::test_util::prepare_test_dir;
-use crate::{Builder, EntryData};
+use crate::Builder;
+use crate::test_util::{build_and_open, prepare_test_dir};
 use assert2::assert;
 use proptest::prelude::{Arbitrary, BoxedStrategy, Strategy};
 use tempfile::TempDir;
 use test_strategy::proptest;
-use tokio::io::AsyncReadExt;
-use zip::ZipArchive;
 
 /// Path entry, for generating arbitrary archive content
 #[derive(Debug, Clone)]
@@ -153,16 +150,4 @@ async fn filesystem_file_dir_symlink() {
     assert!(s == "/foo/bar");
     assert!(unpacked_link2.unix_mode().expect("Must have unix mode") == 0o120777);
     drop(unpacked_link2);
-}
-
-// TODO: Use from test_util.rs
-async fn build_and_open<T: EntryData>(builder: Builder<T>) -> ZipArchive<std::io::Cursor<Vec<u8>>> {
-    let mut zippity = pin!(builder.build());
-    let size = zippity.size();
-
-    let mut buf = Vec::new();
-    zippity.read_to_end(&mut buf).await.unwrap();
-
-    assert!(size == (buf.len() as u64));
-    ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip")
 }

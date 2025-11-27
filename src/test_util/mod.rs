@@ -2,10 +2,13 @@ pub mod test_entry_data;
 
 use assert2::assert;
 use proptest::strategy::Strategy;
-use std::pin::Pin;
+use std::pin::{Pin, pin};
 use std::{fs, io::Result};
 use tempfile::TempDir;
 use tokio::io::{AsyncRead, AsyncReadExt};
+use zip::ZipArchive;
+
+use crate::{Builder, EntryData};
 
 /// Returns a proptest strategy that minimizes to maximum read size
 pub fn read_size_strategy() -> impl Strategy<Value = usize> {
@@ -358,4 +361,17 @@ pub mod funky_entry_data {
             0
         }
     }
+}
+
+pub async fn build_and_open<T: EntryData>(
+    builder: Builder<T>,
+) -> ZipArchive<std::io::Cursor<Vec<u8>>> {
+    let mut zippity = pin!(builder.build());
+    let size = zippity.size();
+
+    let mut buf = Vec::new();
+    zippity.read_to_end(&mut buf).await.unwrap();
+
+    assert!(size == (buf.len() as u64));
+    ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip")
 }

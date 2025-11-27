@@ -1,11 +1,12 @@
-use std::{collections::HashSet, pin::pin};
+use std::collections::HashSet;
 
-use crate::{Builder, EntryData, test_util::test_entry_data::TestEntryData};
+use crate::{
+    Builder,
+    test_util::{build_and_open, test_entry_data::TestEntryData},
+};
 use assert2::assert;
 use indexmap::IndexMap;
 use test_strategy::proptest;
-use tokio::io::AsyncReadExt;
-use zip::ZipArchive;
 
 #[tokio::test]
 async fn empty_archive() {
@@ -267,15 +268,4 @@ async fn symlink_permissions() {
     let permissions = unpacked.by_index(0).unwrap().unix_mode().unwrap();
 
     assert!(permissions == 0o120777);
-}
-
-async fn build_and_open<T: EntryData>(builder: Builder<T>) -> ZipArchive<std::io::Cursor<Vec<u8>>> {
-    let mut zippity = pin!(builder.build());
-    let size = zippity.size();
-
-    let mut buf = Vec::new();
-    zippity.read_to_end(&mut buf).await.unwrap();
-
-    assert!(size == (buf.len() as u64));
-    ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip")
 }
