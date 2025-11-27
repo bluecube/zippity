@@ -2,10 +2,9 @@ use std::{
     future::{Future, Ready},
     io::{Cursor, Result, SeekFrom},
     pin::Pin,
-    task::{Context, Poll, ready},
+    task::{Context, Poll},
 };
 
-use pin_project::pin_project;
 use tokio::io::{AsyncRead, AsyncSeek, Empty, ReadBuf, empty};
 
 pub trait EntryData {
@@ -91,91 +90,6 @@ impl<'a> EntryData for &'a [u8] {
     }
 }
 
-#[pin_project(project = OptionEntryReaderProj)]
-pub enum OptionEntryReader<T: EntryData> {
-    Some(#[pin] T::Reader),
-    None,
-}
-
-impl<T: EntryData> EntryReader<Option<T>> for OptionEntryReader<T> {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        data: &Option<T>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<Result<()>> {
-        match self.project() {
-            OptionEntryReaderProj::Some(reader) => {
-                let inner_data = data.as_ref().expect("Some reader requires Some data");
-                reader.poll_read(inner_data, cx, buf)
-            }
-            OptionEntryReaderProj::None => Poll::Ready(Ok(())),
-        }
-    }
-
-    fn start_seek(self: Pin<&mut Self>, data: &Option<T>, pos: SeekFrom) -> Result<()> {
-        match self.project() {
-            OptionEntryReaderProj::Some(reader) => {
-                let inner_data = data.as_ref().expect("Some reader requires Some data");
-                reader.start_seek(inner_data, pos)
-            }
-            OptionEntryReaderProj::None => Ok(()),
-        }
-    }
-
-    fn poll_seek_complete(
-        self: Pin<&mut Self>,
-        data: &Option<T>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Result<u64>> {
-        match self.project() {
-            OptionEntryReaderProj::Some(reader) => {
-                let inner_data = data.as_ref().expect("Some reader requires Some data");
-                reader.poll_seek_complete(inner_data, cx)
-            }
-            OptionEntryReaderProj::None => Poll::Ready(Ok(0)),
-        }
-    }
-}
-
-#[pin_project]
-pub struct OptionEntryDataFuture<T: EntryData> {
-    #[pin]
-    inner: Option<T::Future>,
-}
-
-impl<T: EntryData> Future for OptionEntryDataFuture<T> {
-    type Output = Result<OptionEntryReader<T>>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.project().inner.as_pin_mut() {
-            Some(inner) => {
-                let reader_result = ready!(inner.poll(cx))?;
-                Poll::Ready(Ok(OptionEntryReader::Some(reader_result)))
-            }
-            None => Poll::Ready(Ok(OptionEntryReader::None)),
-        }
-    }
-}
-
-impl<T: EntryData> EntryData for Option<T> {
-    type Reader = OptionEntryReader<T>;
-    type Future = OptionEntryDataFuture<T>;
-
-    fn get_reader(&self) -> Self::Future {
-        OptionEntryDataFuture {
-            inner: self.as_ref().map(|ed| ed.get_reader()),
-        }
-    }
-
-    fn size(&self) -> u64 {
-        match self {
-            Some(entry) => entry.size(),
-            None => 0,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::pin::pin;
@@ -213,22 +127,4 @@ mod tests {
         assert!(read_back.as_slice() == entry);
     }
 
-    #[tokio::test]
-    async fn option_entry_none() {
-        let size = check_size_matches::<Option<&[u8]>>(&None).await;
-        assert!(size == 0);
-    }
-
-    #[tokio::test]
-    async fn option_entry_some() {
-        let value = b"23456789sdfghjk,".as_slice();
-        let entry = Some(value);
-
-        check_size_matches(&entry).await;
-
-        let reader = pin!(entry.get_reader().await.unwrap());
-        let read_back = read_to_vec_entry(reader, &entry, 1024).await.unwrap();
-
-        assert!(read_back.as_slice() == value);
-    }
 }
