@@ -3,7 +3,6 @@ use std::{collections::HashMap, io::Write, ops::Range, path::Path};
 use indexmap::IndexMap;
 
 use crate::{Builder, Reader};
-use bytes::Bytes;
 use proptest::{
     arbitrary::Arbitrary,
     strategy::{BoxedStrategy, Just, MapInto, Strategy},
@@ -11,7 +10,7 @@ use proptest::{
 use tempfile::TempDir;
 
 #[derive(Clone, Debug)]
-pub struct TestEntryData(pub IndexMap<String, Bytes>);
+pub struct TestEntryData(pub IndexMap<String, Vec<u8>>);
 
 /// Constructs TestEntryData from a format that is hopefully compatible with the
 /// debug print output of this struct -- you can just copy-paste the debug output
@@ -54,7 +53,7 @@ macro_rules! test_entry_data {
 /// A type that holds both a reader and a hash map with the entries the reader contains.
 #[derive(Clone, Debug)]
 pub struct ReaderAndData {
-    pub reader: Reader<Bytes>,
+    pub reader: Reader<Vec<u8>>,
     pub data: TestEntryData,
 }
 
@@ -83,13 +82,8 @@ impl Arbitrary for TestEntryData {
     type Strategy = BoxedStrategy<TestEntryData>;
 
     fn arbitrary_with(args: Self::Parameters) -> Self::Strategy {
-        let content_strategy = if args.max_size == 0 {
-            Just(Bytes::new()).boxed()
-        } else {
-            proptest::collection::vec(proptest::bits::u8::ANY, 0..args.max_size)
-                .prop_map_into::<Bytes>()
-                .boxed()
-        };
+        let content_strategy =
+            proptest::collection::vec(proptest::bits::u8::ANY, 0..=args.max_size).boxed();
 
         proptest::collection::hash_map(args.entry_name_pattern, content_strategy, args.count_range)
             .prop_map_into()
@@ -122,7 +116,7 @@ impl Arbitrary for ReaderAndData {
     }
 }
 
-impl Arbitrary for Reader<Bytes> {
+impl Arbitrary for Reader<Vec<u8>> {
     type Parameters = ArbitraryReaderParams;
     type Strategy = MapInto<BoxedStrategy<ReaderAndData>, Self>;
 
@@ -141,21 +135,21 @@ impl Default for ArbitraryTestEntryDataParams {
     }
 }
 
-impl From<ReaderAndData> for Reader<Bytes> {
+impl From<ReaderAndData> for Reader<Vec<u8>> {
     fn from(value: ReaderAndData) -> Self {
         value.reader
     }
 }
 
-impl From<HashMap<String, Bytes>> for TestEntryData {
-    fn from(value: HashMap<String, Bytes>) -> Self {
+impl From<HashMap<String, Vec<u8>>> for TestEntryData {
+    fn from(value: HashMap<String, Vec<u8>>) -> Self {
         TestEntryData(value.into_iter().collect())
     }
 }
 
-impl From<TestEntryData> for Builder<Bytes> {
+impl From<TestEntryData> for Builder<Vec<u8>> {
     fn from(value: TestEntryData) -> Self {
-        let mut builder: Builder<Bytes> = Builder::new();
+        let mut builder = Builder::new();
 
         value.0.into_iter().for_each(|(name, content)| {
             builder
@@ -167,9 +161,9 @@ impl From<TestEntryData> for Builder<Bytes> {
     }
 }
 
-impl From<TestEntryData> for Reader<Bytes> {
+impl From<TestEntryData> for Reader<Vec<u8>> {
     fn from(value: TestEntryData) -> Self {
-        Into::<Builder<Bytes>>::into(value).build()
+        Builder::from(value).build()
     }
 }
 
@@ -181,7 +175,7 @@ impl From<ArbitraryReaderParams> for ArbitraryTestEntryDataParams {
 
 impl From<TestEntryData> for ReaderAndData {
     fn from(value: TestEntryData) -> Self {
-        let builder: Builder<Bytes> = value.clone().into();
+        let builder = Builder::from(value.clone());
 
         ReaderAndData {
             reader: builder.build(),

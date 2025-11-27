@@ -104,7 +104,11 @@ impl<D: EntryData> ReaderEntry<D> {
         loop {
             read_buffer.clear();
             assert!(read_buffer.filled().is_empty());
-            ready!(file_reader.as_mut().poll_read(ctx, &mut read_buffer))?;
+            ready!(
+                file_reader
+                    .as_mut()
+                    .poll_read(&self.data, ctx, &mut read_buffer)
+            )?;
             if read_buffer.filled().is_empty() {
                 break;
             }
@@ -491,7 +495,11 @@ impl ReadState {
                     let mut read_buffer = read_buffer.take(limit);
 
                     assert!(read_buffer.filled().is_empty());
-                    ready!(file_reader.as_mut().poll_read(ctx, &mut read_buffer))?;
+                    ready!(
+                        file_reader
+                            .as_mut()
+                            .poll_read(&entry.data, ctx, &mut read_buffer)
+                    )?;
 
                     self.chunk_processed_size += read_buffer.filled().len() as u64;
                     self.to_skip -= read_buffer.filled().len() as u64;
@@ -503,11 +511,11 @@ impl ReadState {
                     }
                 }
             } else {
-                let pos_after_seek = ready!(
-                    file_reader
-                        .as_mut()
-                        .seek(ctx, SeekFrom::Start(self.to_skip))
-                )?;
+                let pos_after_seek = ready!(file_reader.as_mut().seek(
+                    &entry.data,
+                    ctx,
+                    SeekFrom::Start(self.to_skip)
+                ))?;
                 assert!(pos_after_seek == self.to_skip);
                 self.chunk_processed_size += self.to_skip;
                 self.to_skip = 0;
@@ -515,7 +523,7 @@ impl ReadState {
         }
 
         let remaining_before_poll = output.remaining();
-        ready!(file_reader.as_mut().poll_read(ctx, output))?;
+        ready!(file_reader.as_mut().poll_read(&entry.data, ctx, output))?;
 
         if output.remaining() == remaining_before_poll {
             // Nothing was output => we read everything in the file already
@@ -943,7 +951,6 @@ mod test {
     use crate::test_util::test_entry_data::{ArbitraryReaderParams, TestEntryData};
     use crate::test_util::{funky_entry_data, measure_size, read_size_strategy, read_to_vec};
     use assert2::assert;
-    use bytes::Bytes;
     use futures_util::FutureExt;
     use std::{io::ErrorKind, pin::pin};
     use test_strategy::proptest;
@@ -1334,9 +1341,11 @@ mod test {
     /// only verifies that the expected and actual sizes match.
     #[tokio::test]
     async fn zip64_count() {
-        let mut builder = Builder::<()>::new();
+        let mut builder = Builder::<&[u8]>::new();
         for i in 0..0x10001 {
-            builder.add_entry(format!("Empty file {}", i), ()).unwrap();
+            builder
+                .add_entry(format!("Empty file {}", i), b"".as_ref())
+                .unwrap();
         }
         let zippity = pin!(builder.build());
 
@@ -1378,8 +1387,8 @@ mod test {
     async fn prepare_seek_test_data(
         content: TestEntryData,
         read_size: usize,
-    ) -> (Reader<Bytes>, Vec<u8>) {
-        let builder: Builder<Bytes> = content.into();
+    ) -> (Reader<Vec<u8>>, Vec<u8>) {
+        let builder = Builder::from(content);
 
         let zippity_whole = pin!(builder.clone().build());
         let buf_whole = read_to_vec(zippity_whole, read_size).await.unwrap();
@@ -1503,7 +1512,7 @@ mod test {
     /// Test that seeking to a negative location results in an error.
     #[proptest(async = "tokio")]
     async fn seeking_before_start(distance: u8) {
-        let mut reader = pin!(Builder::<()>::new().build());
+        let mut reader = pin!(Builder::<&[u8]>::new().build());
         let seek_offset = -(distance as i64) - 1;
         let err = reader
             .seek(SeekFrom::Current(seek_offset))
@@ -1519,7 +1528,7 @@ mod test {
     /// Test that seeking to a valid location in a zip file using SeekFrom::Start works as expected
     #[proptest(async = "tokio")]
     async fn seeking_after_end_from_start(distance: u8) {
-        let mut reader = pin!(Builder::<()>::new().build());
+        let mut reader = pin!(Builder::<&[u8]>::new().build());
         let seek_pos = reader.size() + distance as u64;
         let reported_position = reader.seek(SeekFrom::Start(seek_pos)).await.unwrap();
         assert!(reported_position == seek_pos);
@@ -1531,7 +1540,7 @@ mod test {
     /// Test that seeking to a valid location in a zip file using SeekFrom::Start works as expected
     #[proptest(async = "tokio")]
     async fn seeking_after_end_from_current(distance: u8) {
-        let mut reader = pin!(Builder::<()>::new().build());
+        let mut reader = pin!(Builder::<&[u8]>::new().build());
         let seek_position = reader.size() as i64 + distance as i64;
         let reported_position = reader.seek(SeekFrom::Current(seek_position)).await.unwrap();
         assert!(reported_position == seek_position as u64);
@@ -1752,7 +1761,7 @@ mod test {
     /// Test that seeking to a valid location in a zip file using SeekFrom::Start works as expected
     #[proptest(async = "tokio")]
     async fn clone(
-        mut reader: Reader<Bytes>,
+        mut reader: Reader<Vec<u8>>,
         #[strategy(read_size_strategy())] read_size: usize,
         #[strategy(0f64..=1f64)] seek_pos_fraction: f64,
     ) {
@@ -1788,7 +1797,7 @@ mod test {
     /// Test that taking a reader empties the source and returns the original data.
     #[proptest(async = "tokio")]
     async fn take_pinned(
-        #[any(ArbitraryReaderParams { seek: true, ..Default::default()})] reader: Reader<Bytes>,
+        #[any(ArbitraryReaderParams { seek: true, ..Default::default()})] reader: Reader<Vec<u8>>,
     ) {
         let size = reader.size();
         let pos = reader.tell();

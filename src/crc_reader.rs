@@ -5,10 +5,11 @@ use std::{
 };
 
 use pin_project::pin_project;
-use tokio::io::{AsyncRead, AsyncSeek, ReadBuf};
+use tokio::io::ReadBuf;
 
-/// Wraps an existing AsyncRead and AsyncSeek object and calculates CRC32 while reading from it.
-/// Also adapts the tokio AsyncSeek to something closer to std::futures::AsyncSeek
+use crate::entry_data::EntryReader;
+
+/// Wraps an existing EntryReader and calculates CRC32 while reading from it.
 #[pin_project]
 pub struct CrcReader<T> {
     #[pin]
@@ -38,35 +39,68 @@ impl<T> CrcReader<T> {
     }
 }
 
-impl<T: AsyncRead> AsyncRead for CrcReader<T> {
-    fn poll_read(
+impl<T> CrcReader<T> {
+    /// This is method adapts the two phase seek from Tokio::AsyncSeek to a simpler
+    /// single call interface similar to futures::io::AsyncSeek.
+    pub fn seek<D>(
+        mut self: Pin<&mut Self>,
+        data: &D,
+        ctx: &mut Context<'_>,
+        position: SeekFrom,
+    ) -> Poll<Result<u64>>
+    where
+        T: EntryReader<D>,
+    {
+        if self.seek_in_progress {
+            self.poll_seek_complete(data, ctx)
+        } else {
+            self.as_mut().start_seek(data, position)?;
+            self.as_mut().poll_seek_complete(data, ctx)
+        }
+    }
+
+    pub fn poll_read<D>(
         self: Pin<&mut Self>,
+        data: &D,
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
-    ) -> Poll<Result<()>> {
+    ) -> Poll<Result<()>>
+    where
+        T: EntryReader<D>,
+    {
         let projected = self.project();
         let filled_len_before = buf.filled().len();
-        ready!(projected.inner_reader.poll_read(cx, buf))?;
+        ready!(projected.inner_reader.poll_read(data, cx, buf))?;
         projected.hasher.update(&buf.filled()[filled_len_before..]);
 
         Poll::Ready(Ok(()))
     }
 }
 
-impl<T: AsyncSeek> CrcReader<T> {
-    pub fn seek(
+impl<D, T: EntryReader<D>> EntryReader<D> for CrcReader<T> {
+    fn poll_read(
         self: Pin<&mut Self>,
-        ctx: &mut Context<'_>,
-        position: SeekFrom,
-    ) -> Poll<Result<u64>> {
-        let mut projected = self.project();
-        if !*projected.seek_in_progress {
-            *projected.did_seek = true;
-            *projected.seek_in_progress = true;
-            projected.inner_reader.as_mut().start_seek(position)?;
-        }
+        data: &D,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<Result<()>> {
+        self.poll_read(data, cx, buf)
+    }
 
-        let pos = ready!(projected.inner_reader.poll_complete(ctx))?;
+    fn start_seek(self: Pin<&mut Self>, data: &D, pos: SeekFrom) -> Result<()> {
+        let projected = self.project();
+        *projected.did_seek = true;
+        *projected.seek_in_progress = true;
+        projected.inner_reader.start_seek(data, pos)
+    }
+
+    fn poll_seek_complete(
+        self: Pin<&mut Self>,
+        data: &D,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<u64>> {
+        let projected = self.project();
+        let pos = ready!(projected.inner_reader.poll_seek_complete(data, cx))?;
         *projected.seek_in_progress = false;
         Poll::Ready(Ok(pos))
     }
@@ -75,8 +109,9 @@ impl<T: AsyncSeek> CrcReader<T> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::test_util::{read_size_strategy, read_to_vec};
+    use crate::test_util::{entry_reader, read_size_strategy};
     use assert2::assert;
+    use std::io::Cursor;
     use std::pin::pin;
     use test_strategy::proptest;
 
@@ -85,8 +120,11 @@ mod test {
         content: Vec<u8>,
         #[strategy(read_size_strategy())] read_size: usize,
     ) {
-        let mut reader = pin!(CrcReader::new(&content[..]));
-        let output = read_to_vec(reader.as_mut(), read_size).await.unwrap();
+        let data = &content[..];
+        let mut reader = pin!(CrcReader::new(Cursor::new(data)));
+        let output = entry_reader::read_to_vec(reader.as_mut(), &data, read_size)
+            .await
+            .unwrap();
 
         assert!(output == content);
         assert!(reader.get_crc32() == crc32fast::hash(&content));
@@ -98,8 +136,10 @@ mod test {
     #[tokio::test]
     async fn known_crc() {
         let data: &[u8] = b"1234";
-        let mut reader = pin!(CrcReader::new(data));
-        let _ = read_to_vec(reader.as_mut(), data.len()).await.unwrap();
+        let mut reader = pin!(CrcReader::new(Cursor::new(data)));
+        let _ = entry_reader::read_to_vec(reader.as_mut(), &data, data.len())
+            .await
+            .unwrap();
         assert!(reader.get_crc32() == 0x9be3e0a3);
     }
 }
