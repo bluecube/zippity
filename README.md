@@ -11,9 +11,7 @@ Library for asynchronously creating a ZIP file on the fly.
 - Output is driven from outside (implements `[tokio::io::AsyncRead]`)
 - Allows seeking in the file (implements `[tokio::io::AsyncSeek]`)
 - Supports files on the filesystem as entries
-  - This part works, but is being reworked, see #6.
 - Supports integration with Actix Web (`[Reader::into_responder()]`)
-  - This part works, but is being reworked, see #5.
 
 ## Non-features
 These are not currently planned:
