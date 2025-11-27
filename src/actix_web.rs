@@ -185,7 +185,6 @@ impl<D: EntryData + 'static> MessageBody for Body<D> {
 mod test {
     use actix_web::{Responder, body::MessageBody as _, http::header::RANGE, test};
     use assert2::assert;
-    use bytes::Bytes;
     use futures_util::{StreamExt, stream::poll_fn};
     use std::pin::pin;
     use test_strategy::proptest;
@@ -250,7 +249,7 @@ mod test {
 
     /// Tests that reader_and_callback calls the callback on drop
     #[proptest(async = "tokio")]
-    async fn reader_and_callback_spawns_callback(reader: Reader<Bytes>) {
+    async fn reader_and_callback_spawns_callback(reader: Reader<Vec<u8>>) {
         let size = reader.size();
         let (tx, mut rx) = oneshot::channel();
 
@@ -267,7 +266,7 @@ mod test {
     }
 
     #[proptest(async = "tokio")]
-    async fn body_size_limiting(reader: Reader<Bytes>, #[strategy(0f64..=1f64)] size_f: f64) {
+    async fn body_size_limiting(reader: Reader<Vec<u8>>, #[strategy(0f64..=1f64)] size_f: f64) {
         let read_length = (reader.size() as f64 * size_f).floor() as u64;
 
         let mut body = pin!(Body::new(reader.into_responder().inner, read_length));
