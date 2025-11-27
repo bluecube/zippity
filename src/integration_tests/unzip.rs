@@ -2,7 +2,6 @@ use std::{collections::HashSet, pin::pin};
 
 use crate::{Builder, EntryData, test_util::test_entry_data::TestEntryData};
 use assert2::assert;
-use bytes::Bytes;
 use indexmap::IndexMap;
 use test_strategy::proptest;
 use tokio::io::AsyncReadExt;
@@ -75,7 +74,7 @@ async fn any_archive(content: TestEntryData) {
     let mut unpacked = build_and_open(builder).await;
     assert!(unpacked.len() == content.0.len());
 
-    let mut unpacked_content: IndexMap<String, Bytes> = IndexMap::new();
+    let mut unpacked_content: IndexMap<String, Vec<u8>> = IndexMap::new();
     for i in 0..unpacked.len() {
         dbg!(&i);
         let mut zipfile = unpacked.by_index(i).unwrap();

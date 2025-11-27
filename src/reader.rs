@@ -951,7 +951,6 @@ mod test {
     use crate::test_util::test_entry_data::{ArbitraryReaderParams, TestEntryData};
     use crate::test_util::{funky_entry_data, measure_size, read_size_strategy, read_to_vec};
     use assert2::assert;
-    use bytes::Bytes;
     use futures_util::FutureExt;
     use std::{io::ErrorKind, pin::pin};
     use test_strategy::proptest;
@@ -1388,8 +1387,8 @@ mod test {
     async fn prepare_seek_test_data(
         content: TestEntryData,
         read_size: usize,
-    ) -> (Reader<Bytes>, Vec<u8>) {
-        let builder: Builder<Bytes> = content.into();
+    ) -> (Reader<Vec<u8>>, Vec<u8>) {
+        let builder = Builder::from(content);
 
         let zippity_whole = pin!(builder.clone().build());
         let buf_whole = read_to_vec(zippity_whole, read_size).await.unwrap();
@@ -1762,7 +1761,7 @@ mod test {
     /// Test that seeking to a valid location in a zip file using SeekFrom::Start works as expected
     #[proptest(async = "tokio")]
     async fn clone(
-        mut reader: Reader<Bytes>,
+        mut reader: Reader<Vec<u8>>,
         #[strategy(read_size_strategy())] read_size: usize,
         #[strategy(0f64..=1f64)] seek_pos_fraction: f64,
     ) {
@@ -1798,7 +1797,7 @@ mod test {
     /// Test that taking a reader empties the source and returns the original data.
     #[proptest(async = "tokio")]
     async fn take_pinned(
-        #[any(ArbitraryReaderParams { seek: true, ..Default::default()})] reader: Reader<Bytes>,
+        #[any(ArbitraryReaderParams { seek: true, ..Default::default()})] reader: Reader<Vec<u8>>,
     ) {
         let size = reader.size();
         let pos = reader.tell();

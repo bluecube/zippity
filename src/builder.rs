@@ -499,7 +499,6 @@ mod test {
     use super::*;
     use assert_matches::assert_matches;
     use assert2::assert;
-    use bytes::Bytes;
     use structs::DosDatetime;
 
     use std::{collections::HashMap, time::UNIX_EPOCH};
@@ -530,7 +529,7 @@ mod test {
     async fn local_size_matches_chunks(content: TestEntryData) {
         use crate::reader::Chunk;
 
-        let builder: Builder<Bytes> = content.into();
+        let builder = Builder::from(content);
 
         let local_sizes = {
             let mut local_sizes = HashMap::with_capacity(builder.entries.len());

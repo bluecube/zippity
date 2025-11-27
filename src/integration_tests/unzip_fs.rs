@@ -9,7 +9,6 @@ use std::{
 use crate::test_util::prepare_test_dir;
 use crate::{Builder, EntryData};
 use assert2::assert;
-use bytes::Bytes;
 use proptest::prelude::{Arbitrary, BoxedStrategy, Strategy};
 use tempfile::TempDir;
 use test_strategy::proptest;
@@ -19,7 +18,7 @@ use zip::ZipArchive;
 /// Path entry, for generating arbitrary archive content
 #[derive(Debug, Clone)]
 enum Entry {
-    File(Bytes),
+    File(Vec<u8>),
     Dir(HashMap<String, Entry>),
 }
 
@@ -60,12 +59,12 @@ impl Entry {
         }
     }
 
-    fn make_expected_content(&self, mut name: String, out: &mut HashMap<String, Bytes>) {
+    fn make_expected_content(&self, mut name: String, out: &mut HashMap<String, Vec<u8>>) {
         match self {
             Entry::File(bytes) => assert!(out.insert(name, bytes.clone()).is_none()),
             Entry::Dir(entries) => {
                 name += "/";
-                assert!(out.insert(name.clone(), Bytes::new()).is_none());
+                assert!(out.insert(name.clone(), Vec::new()).is_none());
                 for (entry_name, entry) in entries {
                     let entry_name = name.clone() + entry_name;
                     entry.make_expected_content(entry_name, out);
