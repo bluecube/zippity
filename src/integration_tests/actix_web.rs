@@ -1,7 +1,7 @@
 use std::{io::SeekFrom, ops::Deref, pin::pin, sync::Arc};
 
 use crate::{
-    Builder,
+    Builder, Reader,
     test_util::test_entry_data::{ReaderAndData, TestEntryData},
 };
 use actix_test::TestServer;
@@ -12,12 +12,12 @@ use bytes::Bytes;
 use test_strategy::proptest;
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncSeekExt},
-    sync::Mutex,
+    sync::{Mutex, oneshot},
 };
 
 struct TestApp {
     entry_data: TestEntryData,
-    callback_counter: Mutex<u32>,
+    receiver: Mutex<Option<oneshot::Receiver<Reader<Vec<u8>>>>>,
 }
 
 async fn download_zip_no_callback(data: web::Data<TestApp>) -> impl Responder {
@@ -28,21 +28,14 @@ async fn download_zip_no_callback(data: web::Data<TestApp>) -> impl Responder {
 }
 
 async fn download_zip_yes_callback(data: web::Data<TestApp>) -> impl Responder {
-    let app = Arc::clone(data.deref());
+    let app = data.deref();
     let builder: Builder<_> = app.entry_data.clone().into();
     let reader = builder.build();
-    let reader_size = reader.size();
 
     let (responder, channel) = reader.into_responder_with_channel();
 
-    tokio::spawn(async move {
-        let extracted_reader = channel
-            .await
-            .expect("The responder must send the reader on drop");
-        assert!(extracted_reader.size() == reader_size);
-        let mut locked = app.callback_counter.lock().await;
-        *locked += 1;
-    });
+    app.receiver.lock().await.replace(channel);
+
     responder
 }
 
@@ -63,7 +56,7 @@ async fn prepare(
 
     let app_data = web::Data::new(TestApp {
         entry_data: data.data,
-        callback_counter: Default::default(),
+        receiver: Default::default(),
     });
     let app_data_cloned = app_data.clone();
     let server = actix_test::start(move || {
@@ -84,6 +77,7 @@ async fn prepare(
 
 #[proptest(async = "tokio")]
 async fn read_all(data: ReaderAndData, use_callback: bool) {
+    let reader_size = data.reader.size();
     let (_server, app_data, url, direct_read_result) = prepare(data, use_callback).await;
 
     let direct_read_result = Bytes::from(direct_read_result);
@@ -93,11 +87,17 @@ async fn read_all(data: ReaderAndData, use_callback: bool) {
 
     assert!(http_read_result == direct_read_result);
 
-    let callback_count = *app_data.callback_counter.lock().await;
     if use_callback {
-        assert!(callback_count == 1);
+        let receiver = app_data
+            .receiver
+            .lock()
+            .await
+            .take()
+            .expect("The receiver should be populated");
+        let extracted_reader = receiver.await.expect("The receiver shouldn't have hung up");
+        assert!(extracted_reader.size() == reader_size);
     } else {
-        assert!(callback_count == 0);
+        assert!(app_data.receiver.lock().await.is_none());
     }
 }
 
@@ -108,6 +108,7 @@ async fn read_block(
     #[strategy(0f64..1f64)] boundary1: f64,
     #[strategy(0f64..1f64)] boundary2: f64,
 ) {
+    let reader_size = data.reader.size();
     let (_server, app_data, url, direct_read_result) = prepare(data, use_callback).await;
 
     let mut http_reader = pin!(
@@ -137,10 +138,16 @@ async fn read_block(
 
     assert!(http_read_result == direct_read_result[start..=end]);
 
-    let callback_count = *app_data.callback_counter.lock().await;
     if use_callback {
-        assert!(callback_count > 0);
+        let receiver = app_data
+            .receiver
+            .lock()
+            .await
+            .take()
+            .expect("The receiver should be populated");
+        let extracted_reader = receiver.await.expect("The receiver shouldn't have hung up");
+        assert!(extracted_reader.size() == reader_size);
     } else {
-        assert!(callback_count == 0);
+        assert!(app_data.receiver.lock().await.is_none());
     }
 }
