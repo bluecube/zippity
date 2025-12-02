@@ -17,6 +17,10 @@ chrono = ["dep:chrono"]
 name = "zip_directory"
 required-features = ["tokio-file", "chrono"]
 
+[[example]]
+name = "web_server"
+required-features = ["actix-web"]
+
 [dependencies]
 actix-web = { version = "4.5.1", default-features = false, optional = true }
 assert2 = "0.3.11"
@@ -41,7 +45,7 @@ zip = "0.6.6"
 tokio = { version = "1.32.0", features = ["rt-multi-thread", "io-util", "macros", "process"] }
 tokio-test = "0.4.3"
 async_http_range_reader = "0.7.1"
-actix-web = { version = "4.5.1", default-features = false }
+actix-web = { version = "4.5.1", default-features = false, features = ["macros"]}
 reqwest = "0.12.5"
 actix-test = "0.1.5"
 clap = { version = "4.5.16", features = ["derive"] }

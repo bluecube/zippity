@@ -183,7 +183,7 @@ impl<D: EntryData + 'static> MessageBody for Body<D> {
 
 #[cfg(test)]
 mod test {
-    use actix_web::{Responder, body::MessageBody as _, http::header::RANGE, test};
+    use actix_web::{Responder, body::MessageBody as _, http::header::RANGE};
     use assert2::assert;
     use futures_util::{StreamExt, stream::poll_fn};
     use std::pin::pin;
@@ -202,7 +202,7 @@ mod test {
 
         let responder = reader.into_responder();
 
-        let req = test::TestRequest::get().to_http_request();
+        let req = actix_web::test::TestRequest::get().to_http_request();
         let response = responder.respond_to(&req);
         let headers = response.headers();
 
@@ -226,7 +226,7 @@ mod test {
 
         let responder = reader.into_responder();
 
-        let req = test::TestRequest::get()
+        let req = actix_web::test::TestRequest::get()
             .insert_header((RANGE, "bytes=0-5"))
             .to_http_request();
         let response = responder.respond_to(&req);
