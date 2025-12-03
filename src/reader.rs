@@ -747,7 +747,7 @@ impl ReadState {
                     if output.remaining() != initial_remaining {
                         // We have already written something into the output -> interrupt this call, because
                         // we might need to return Pending when reading the file data
-                        // TODO: Make sure that there is nothing in the staging buffer as well?
+                        assert!(self.staging_buffer.is_empty());
                         break;
                     }
                     zippity_ready!(self.read_entry_data(
@@ -915,8 +915,6 @@ impl<D: EntryData> AsyncSeek for Reader<D> {
         };
 
         self.seek_from_start_pinned(pos);
-        // TODO: This way the seek is lazy, meaning that it will prefer not to do anything
-        // until there is a time to actually read. Is this ok?
         Ok(())
     }
 
