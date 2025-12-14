@@ -275,23 +275,29 @@ impl<D: EntryData> BuilderEntry<D> {
 
         self
     }
+}
 
-    fn get_local_size(&self, name: &str, data_size: u64) -> u64 {
-        let local_header = structs::LocalFileHeader::packed_size();
-        let zip64_extra_data = structs::Zip64ExtraField::packed_size();
-        let filename = name.len() as u64;
-        let data_descriptor = structs::DataDescriptor64::packed_size();
+fn local_header_size(name: &str) -> u64 {
+    let local_header = structs::LocalFileHeader::packed_size();
+    let zip64_extra_data = structs::Zip64ExtraField::packed_size();
+    let filename = name.len() as u64;
+    let data_descriptor = structs::DataDescriptor64::packed_size();
 
-        local_header + zip64_extra_data + filename + data_size + data_descriptor
-    }
+    local_header + zip64_extra_data + filename + data_descriptor
+}
 
-    fn get_cd_header_size(name: &str) -> u64 {
-        let filename = name.len() as u64;
-        let cd_entry = structs::CentralDirectoryHeader::packed_size();
-        let zip64_extra_data = structs::Zip64ExtraField::packed_size();
+fn cd_header_size(name: &str) -> u64 {
+    let filename = name.len() as u64;
+    let cd_entry = structs::CentralDirectoryHeader::packed_size();
+    let zip64_extra_data = structs::Zip64ExtraField::packed_size();
 
-        cd_entry + zip64_extra_data + filename
-    }
+    cd_entry + zip64_extra_data + filename
+}
+
+fn eocd_size() -> u64 {
+    structs::Zip64EndOfCentralDirectoryRecord::packed_size()
+        + structs::Zip64EndOfCentralDirectoryLocator::packed_size()
+        + structs::EndOfCentralDirectory::packed_size()
 }
 
 /// Represents entries of the zip file, which can be converted to a `Reader`.
@@ -299,6 +305,8 @@ impl<D: EntryData> BuilderEntry<D> {
 pub struct Builder<D: EntryData> {
     pub entries: IndexMap<String, BuilderEntry<D>>,
     time_converter: Option<TimeConverter>,
+    /// Total size of the zip.
+    total_size: u64,
 }
 
 impl<D: EntryData + Debug> Debug for Builder<D> {
@@ -328,6 +336,7 @@ impl<D: EntryData> Builder<D> {
         Builder {
             entries: IndexMap::new(),
             time_converter: None,
+            total_size: eocd_size(),
         }
     }
 
@@ -337,15 +346,19 @@ impl<D: EntryData> Builder<D> {
     /// # Errors
     /// Will return an error if `name` is longer than `u16::MAX` (limitation of Zip format),
     /// or the given entry name is already present in the archive.
+    /// Will return an error if the size of the zip file would become larger than u64::MAX after the add.
     pub fn add_entry<T: Into<D>>(
         &mut self,
         name: String,
         data: T,
     ) -> std::result::Result<&mut BuilderEntry<D>, Error> {
         use indexmap::map::Entry;
+
         if u16::try_from(name.len()).is_err() {
             return Err(Error::TooLongEntryName { entry_name: name });
         }
+        let headers_size = local_header_size(&name) + cd_header_size(&name);
+
         let map_vacant_entry = match self.entries.entry(name) {
             Entry::Vacant(e) => e,
             Entry::Occupied(e) => {
@@ -356,22 +369,40 @@ impl<D: EntryData> Builder<D> {
         };
 
         let data = data.into();
+        self.total_size = match headers_size
+            .checked_add(data.size())
+            .and_then(|s| s.checked_add(self.total_size))
+        {
+            Some(size) => size,
+            None => {
+                return Err(Error::TooLongZipFile {
+                    entry_name: map_vacant_entry.into_key(),
+                });
+            }
+        };
+
         let inserted =
             map_vacant_entry.insert(BuilderEntry::new(data, self.time_converter.clone()));
         Ok(inserted)
     }
 
+    /// Return the size of the zip file if it was built immediately.
+    /// Returns the same value as `self.build().size()`.
+    pub fn size(&self) -> u64 {
+        self.total_size
+    }
+
     pub fn build(self) -> Reader<D> {
+        // All size calculations in this method add up to self.total_size, so they are guaranteed to not overflow.
         let mut offset: u64 = 0;
         let mut cd_size: u64 = 0;
         let entries = {
             let mut entries = Vec::with_capacity(self.entries.len());
             for (name, entry) in self.entries.into_iter() {
                 let entry_data_size = entry.data.size();
-                let local_size = entry.get_local_size(&name, entry_data_size);
                 let offset_before_entry = offset;
-                offset += local_size;
-                cd_size += BuilderEntry::<D>::get_cd_header_size(&name);
+                offset += local_header_size(&name) + entry_data_size;
+                cd_size += cd_header_size(&name);
                 let external_attributes =
                     get_external_attributes(entry.file_type, entry.permissions);
 
@@ -389,11 +420,8 @@ impl<D: EntryData> Builder<D> {
         };
 
         let cd_offset = offset;
-        let eocd_size = structs::Zip64EndOfCentralDirectoryRecord::packed_size()
-            + structs::Zip64EndOfCentralDirectoryLocator::packed_size()
-            + structs::EndOfCentralDirectory::packed_size();
         let eocd_offset = cd_offset + cd_size;
-        let total_size = cd_offset + cd_size + eocd_size;
+        let total_size = eocd_offset + eocd_size();
 
         Reader::new(
             Sizes {
@@ -535,7 +563,7 @@ mod test {
             let mut local_sizes = HashMap::with_capacity(builder.entries.len());
 
             for (k, v) in builder.entries.iter() {
-                local_sizes.insert(k.clone(), v.get_local_size(k, v.data.size()));
+                local_sizes.insert(k.clone(), local_header_size(k) + v.data.size());
             }
 
             local_sizes
@@ -564,6 +592,24 @@ mod test {
 
             assert!(local_sizes[entries[i].get_name()] == entry_local_size);
         }
+    }
+
+    #[test]
+    fn empty_builder_size_matches_reader_size() {
+        let builder = Builder::<&[u8]>::new();
+        let size = builder.size();
+        let reader = builder.build();
+
+        assert!(size == reader.size());
+    }
+
+    #[proptest]
+    fn builder_size_matches_reader_size(content: TestEntryData) {
+        let builder = Builder::from(content);
+        let size = builder.size();
+        let reader = builder.build();
+
+        assert!(size == reader.size());
     }
 
     fn datetime_fields(entry: &mut BuilderEntry<&[u8]>, year: i32, is_some: bool) {

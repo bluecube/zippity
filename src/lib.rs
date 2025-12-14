@@ -35,6 +35,8 @@ pub use bytes::BytesStream;
 pub enum Error {
     #[error("Entry name too long (length must fit into 16bit)")]
     TooLongEntryName { entry_name: String },
+    #[error("Adding entry {entry_name} wouuld cause the ZIP file to be longer than u64::MAX")]
+    TooLongZipFile { entry_name: String },
     #[error("Duplicate entry name {entry_name}")]
     DuplicateEntryName { entry_name: String },
     #[error("Entry {entry_name} reports size {expected_size} B, but was {actual_size} B")]
