@@ -52,8 +52,8 @@ copy(&mut zippity, &mut sink()).await.unwrap();
 
 ## Current state
 Consider this a beta version.
-The library is functional, but there are two more API breaking changes planned and then a lot of polish needed before releasing 1.0.0.
-See #1.
+The library is functional, but there's a lot of polish needed before releasing 1.0.0.
+See [#1](https://github.com/bluecube/zippity/issues/1).
 
 ## Crate features
 
