@@ -25,7 +25,7 @@ impl Arbitrary for Entry {
 
     fn arbitrary_with(args: Self::Parameters) -> Self::Strategy {
         proptest::collection::vec(proptest::bits::u8::ANY, 0..10)
-            .prop_map(|bytes| Entry::File(bytes.into()))
+            .prop_map(Entry::File)
             .prop_recursive(
                 args.0,     // Max level count
                 args.1,     // Target entry count
@@ -100,7 +100,7 @@ async fn any_archive_filesystem(#[any((8, 64, 16))] data: Entry) {
         use std::io::Read;
         zipfile.read_to_end(&mut file_content).unwrap();
 
-        unpacked_content.insert(name, file_content.into());
+        unpacked_content.insert(name, file_content);
     }
 
     dbg!(&unpacked_content);

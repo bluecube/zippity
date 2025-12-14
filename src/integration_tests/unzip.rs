@@ -84,7 +84,7 @@ async fn any_archive(content: TestEntryData) {
         use std::io::Read;
         zipfile.read_to_end(&mut file_content).unwrap();
 
-        unpacked_content.insert(name, file_content.into());
+        unpacked_content.insert(name, file_content);
     }
     assert!(unpacked_content == content.0);
 }
