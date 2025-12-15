@@ -551,6 +551,44 @@ mod test {
         assert_matches!(e, Error::TooLongEntryName { entry_name } if entry_name.len() == name_length);
     }
 
+    mod too_large_zip {
+        use super::*;
+        use crate::test_util::funky_entry_data::Zeros;
+
+        #[tokio::test]
+        async fn single_entry_does_not_fit() {
+            let mut builder: Builder<Zeros> = Builder::new();
+
+            let e = builder
+                .add_entry("x".to_string(), Zeros::new(u64::MAX))
+                .unwrap_err();
+            assert_matches!(e, Error::TooLongZipFile { entry_name } if entry_name == "x");
+        }
+
+        #[tokio::test]
+        async fn two_entries_header_fits_data_does_not() {
+            let mut builder: Builder<Zeros> = Builder::new();
+
+            let entry = Zeros::new(u64::MAX - 1024);
+            let _ = builder.add_entry("x".to_string(), entry.clone()).unwrap();
+            let e = builder.add_entry("y".to_string(), entry).unwrap_err();
+            assert_matches!(e, Error::TooLongZipFile { entry_name } if entry_name == "y");
+        }
+
+        #[tokio::test]
+        async fn two_entries_header_does_not_fit() {
+            let mut builder: Builder<Zeros> = Builder::new();
+
+            // Entry is sized so that it perfectly fits inside the limit
+            dbg!(local_header_size("x") + cd_header_size("y") + eocd_size());
+            let entry =
+                Zeros::new(u64::MAX - local_header_size("x") - cd_header_size("y") - eocd_size());
+            let _ = builder.add_entry("x".to_string(), entry.clone()).unwrap();
+            let e = builder.add_entry("y".to_string(), entry).unwrap_err();
+            assert_matches!(e, Error::TooLongZipFile { entry_name } if entry_name == "y");
+        }
+    }
+
     /// Tests an internal property of the builder -- that the sizes generated
     /// during building actually match the chunk size.
     #[proptest(async = "tokio")]
