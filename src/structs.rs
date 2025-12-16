@@ -182,7 +182,8 @@ pub struct DosDatetime {
 }
 
 impl DosDatetime {
-    /// Constructs a new DosDateTime. Returns any value is out of range.
+    /// Constructs a new `DosDateTime`.
+    /// Returns `None` if any value is out of range.
     pub(crate) fn new(
         year: i32,
         month: u32,
@@ -194,56 +195,67 @@ impl DosDatetime {
         if !(1980..(1980 + 128)).contains(&year) {
             return None;
         }
+        let year = u16::try_from(year - 1980).ok()?;
+
         if !(1..=12).contains(&month) {
             return None;
         }
+        let month = u16::try_from(month).ok()?;
+
         if !(1..=31).contains(&day) {
             return None;
         }
+        let day = u16::try_from(day).ok()?;
+
         if hour > 23 {
             return None;
         }
+        let hour = u16::try_from(hour).ok()?;
+
         if minute > 59 {
             return None;
         }
+        let minute = u16::try_from(minute).ok()?;
+
         if second > 59 {
             return None;
         }
+        let two_second = u16::try_from(second / 2).ok()?;
 
         Some(DosDatetime {
-            time: (second / 2) as u16 | ((minute as u16) << 5) | ((hour as u16) << 11),
-            date: day as u16 | ((month as u16) << 5) | (((year - 1980) << 9) as u16),
+            time: two_second | (minute << 5) | (hour << 11),
+            date: day | (month << 5) | (year << 9),
         })
     }
 
     #[cfg(test)]
-    pub fn year(&self) -> i32 {
-        ((self.date >> 9) + 1980) as i32
+    pub fn year(self) -> i32 {
+        i32::from((self.date >> 9) + 1980)
     }
 
     #[cfg(test)]
-    pub fn month(&self) -> u32 {
-        ((self.date >> 5) & 15) as u32
+    pub fn month(self) -> u32 {
+        u32::from((self.date >> 5) & 15)
     }
 
     #[cfg(test)]
-    pub fn day(&self) -> u32 {
-        (self.date & 31) as u32
+    pub fn day(self) -> u32 {
+        u32::from(self.date & 31)
     }
 
     #[cfg(test)]
-    pub fn hour(&self) -> u32 {
-        (self.time >> 11) as u32
+    pub fn hour(self) -> u32 {
+        u32::from(self.time >> 11)
     }
 
     #[cfg(test)]
-    pub fn minute(&self) -> u32 {
-        ((self.time >> 5) & 63) as u32
+    pub fn minute(self) -> u32 {
+        u32::from((self.time >> 5) & 63)
     }
 
     #[cfg(test)]
-    pub fn second(&self) -> u32 {
-        ((self.time & 31) * 2) as u32
+    pub fn second(self) -> u32 {
+        u32::from((self.time & 31) * 2)
     }
 }
 

@@ -9,7 +9,7 @@ use tokio::io::ReadBuf;
 
 use crate::entry_data::EntryReader;
 
-/// Wraps an existing EntryReader and calculates CRC32 while reading from it.
+/// Wraps an existing `EntryReader` and calculates CRC32 while reading from it.
 #[pin_project]
 pub struct CrcReader<T> {
     #[pin]
@@ -40,8 +40,8 @@ impl<T> CrcReader<T> {
 }
 
 impl<T> CrcReader<T> {
-    /// This is method adapts the two phase seek from Tokio::AsyncSeek to a simpler
-    /// single call interface similar to futures::io::AsyncSeek.
+    /// This is method adapts the two phase seek from `tokio::AsyncSeek` to a simpler
+    /// single call interface similar to `futures::io::AsyncSeek`.
     pub fn seek<D>(
         mut self: Pin<&mut Self>,
         data: &D,
@@ -131,8 +131,7 @@ mod test {
     }
 
     /// Verify a known example CRC value.
-    /// The example is taken from unit tests from crate Zip:
-    /// https://github.com/zip-rs/zip/blob/75e8f6bab5a6525014f6f52c6eb608ab46de48af/src/crc32.rs#L56
+    /// The example is taken from [unit tests of crate Zip](https://github.com/zip-rs/zip/blob/75e8f6bab5a6525014f6f52c6eb608ab46de48af/src/crc32.rs#L77)
     #[tokio::test]
     async fn known_crc() {
         let data: &[u8] = b"1234";
@@ -140,6 +139,6 @@ mod test {
         let _ = entry_reader::read_to_vec(reader.as_mut(), &data, data.len())
             .await
             .unwrap();
-        assert!(reader.get_crc32() == 0x9be3e0a3);
+        assert!(reader.get_crc32() == 0x9be3_e0a3);
     }
 }

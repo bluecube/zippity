@@ -26,7 +26,7 @@ pub(crate) struct ReaderEntry<D: EntryData> {
     crc32: Option<u32>,
     datetime: structs::DosDatetime,
     external_attributes: u32,
-    /// Number of bytes of the entry data, cached from EntryData::size()
+    /// Number of bytes of the entry data, cached from `EntryData::size()`
     size: u64,
 }
 
@@ -226,7 +226,7 @@ struct ReadState {
     current_chunk: Chunk,
     /// How many bytes did we already read from the current chunk.
     /// Data in staging buffer counts as already processed.
-    /// Used only for verification and for error reporting on EntryData.
+    /// Used only for verification and for error reporting on `EntryData`.
     chunk_processed_size: u64,
     /// Current position in the file (counts bytes written to the output)
     /// This value is returned by tell.
@@ -271,6 +271,7 @@ impl<D: EntryData> Reader<D> {
     /// Creates a reader that contains no data and is always at EOF.
     /// This is not a valid zip file!
     /// The resulting Reader is useful mostly as a cheap dummy value for replacing an actual reader.
+    #[must_use]
     pub fn new_empty_file() -> Self {
         Reader {
             sizes: Sizes {
@@ -709,13 +710,10 @@ impl ReadState {
                 match $expression {
                     Poll::Ready(Ok(x)) => x,
                     Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                    Poll::Pending => {
-                        if output.remaining() == initial_remaining {
-                            return Poll::Pending;
-                        } else {
-                            return Poll::Ready(Ok(()));
-                        }
+                    Poll::Pending if output.remaining() == initial_remaining => {
+                        return Poll::Pending
                     }
+                    _ => return Poll::Ready(Ok(())),
                 }
             };
         }
@@ -946,8 +944,10 @@ fn get_read_buf(vec: &mut Vec<u8>) -> ReadBuf<'_> {
 mod test {
     use super::*;
     use crate::Builder;
-    use crate::test_util::test_entry_data::{ArbitraryReaderParams, TestEntryData};
-    use crate::test_util::{funky_entry_data, measure_size, read_size_strategy, read_to_vec};
+    use crate::test_util::{
+        funky_entry_data, measure_size, read_size_strategy, read_to_vec, skip_length,
+        test_entry_data::{ArbitraryReaderParams, TestEntryData},
+    };
     use assert2::assert;
     use futures_util::FutureExt;
     use std::{io::ErrorKind, pin::pin};
@@ -964,7 +964,7 @@ mod test {
     impl TestPs {
         fn new() -> TestPs {
             TestPs {
-                v: 0x0102030405060708,
+                v: 0x0102_0304_0506_0708,
             }
         }
     }
@@ -1076,7 +1076,7 @@ mod test {
         #[strategy(0usize..20usize)] output_buffer_extra_size: usize,
         #[strategy(0f64..=1f64)] to_skip_f: f64,
     ) {
-        let to_skip = (initial_buffer_content.len() as f64 * to_skip_f) as u64;
+        let to_skip = skip_length(initial_buffer_content.len(), to_skip_f);
         let mut rs = ReadState {
             current_chunk: Chunk::Finished,
             chunk_processed_size: 0,
@@ -1183,7 +1183,7 @@ mod test {
         #[strategy(0usize..20usize)] output_buffer_extra_size: usize,
         #[strategy(0f64..1f64)] to_skip_f: f64,
     ) {
-        let to_skip = 1 + ((test_data.len() - 2) as f64 * to_skip_f) as u64;
+        let to_skip = 1 + skip_length(test_data.len() - 2, to_skip_f);
         assert!(
             to_skip > 0,
             "Test construction: We always must skip at least 1 byte"
@@ -1230,7 +1230,7 @@ mod test {
         #[strategy(0usize..20usize)] output_buffer_extra_size: usize,
         #[strategy(0f64..=1f64)] to_skip_f: f64,
     ) {
-        let to_skip = (initial_buffer_content.len() as f64 * to_skip_f) as u64;
+        let to_skip = skip_length(initial_buffer_content.len(), to_skip_f);
         let mut rs = ReadState {
             current_chunk: Chunk::Finished,
             chunk_processed_size: 0,
@@ -1268,9 +1268,15 @@ mod test {
         #[strategy(proptest::collection::vec(proptest::bits::u8::ANY, 1..100))] test_data: Vec<u8>,
         #[strategy(proptest::collection::vec(proptest::bits::u8::ANY, 0..10))]
         initial_output_content: Vec<u8>,
-        #[strategy(1u64..100u64)] to_skip: u64,
+        #[strategy(1usize..100usize)] to_skip: usize,
         #[strategy(1usize..100usize)] read_size: usize,
     ) {
+        // Calculate range in test data that will be added to the output.
+        let start = to_skip;
+        let stop = (start + read_size).min(test_data.len());
+        let start = start.min(stop);
+
+        let to_skip = to_skip as u64;
         let mut rs = ReadState {
             current_chunk: Chunk::Finished,
             chunk_processed_size: 0,
@@ -1278,11 +1284,6 @@ mod test {
             to_skip,
             position: 0,
         };
-
-        // Calculate range in test data that will be added to the output.
-        let start = to_skip as usize;
-        let stop = (start + read_size).min(test_data.len());
-        let start = start.min(stop);
 
         let mut buf_backing = vec![0; initial_output_content.len() + read_size];
         let mut buf = ReadBuf::new(buf_backing.as_mut_slice());
@@ -1305,7 +1306,7 @@ mod test {
             );
         } else {
             assert!(
-                &rs.staging_buffer[rs.to_skip as usize..] == &test_data[stop..],
+                &rs.staging_buffer[usize::try_from(rs.to_skip).unwrap()..] == &test_data[stop..],
                 "What remains in the staging buffer after the skip must be what we didn't write from the test data"
             );
         }
@@ -1322,7 +1323,7 @@ mod test {
         builder
             .add_entry(
                 "Big file".to_owned(),
-                funky_entry_data::Zeros::new(0x100000001),
+                funky_entry_data::Zeros::new(0x1_0000_0001),
             )
             .unwrap();
         let zippity = pin!(builder.build());
@@ -1342,7 +1343,7 @@ mod test {
         let mut builder = Builder::<&[u8]>::new();
         for i in 0..0x10001 {
             builder
-                .add_entry(format!("Empty file {}", i), b"".as_ref())
+                .add_entry(format!("Empty file {i}"), b"".as_ref())
                 .unwrap();
         }
         let zippity = pin!(builder.build());
@@ -1363,7 +1364,7 @@ mod test {
         let mut builder_slice = Builder::<&[u8]>::new();
         let mut builder_lazy = Builder::<funky_entry_data::LazyReader>::new();
 
-        for (name, value) in content.0.iter() {
+        for (name, value) in &content.0 {
             builder_slice
                 .add_entry(name.clone(), value.as_ref())
                 .unwrap();
@@ -1396,17 +1397,6 @@ mod test {
         (zippity_ret, buf_whole)
     }
 
-    /// Convert a floating point between 0 and 1 and a byte array to a seekable
-    /// offset position within the file.
-    fn calc_seek_pos(pos_f: f64, buf_whole: &[u8]) -> u64 {
-        let seek_pos = (pos_f * buf_whole.len() as f64).floor() as u64;
-        assert!(
-            seek_pos < buf_whole.len() as u64,
-            "Test construction: The position must be inside the file"
-        );
-        seek_pos
-    }
-
     /// Seek the reader to a given position and verify that the remaining data
     /// and returned position matches the end of the given ground truth data.
     async fn seek_read_and_verify<T: EntryData>(
@@ -1420,7 +1410,7 @@ mod test {
         let seek_reported = reader.seek(seek_from).await.unwrap();
         let buf = read_to_vec(reader, read_size).await.unwrap();
 
-        assert!(buf.as_slice() == &ground_truth[seek_reported as usize..]);
+        assert!(buf.as_slice() == &ground_truth[usize::try_from(seek_reported).unwrap()..]);
 
         seek_reported
     }
@@ -1433,7 +1423,7 @@ mod test {
         #[strategy(0f64..=1f64)] seek_pos_fraction: f64,
     ) {
         let (reader, buf_whole) = prepare_seek_test_data(content, read_size).await;
-        let seek_pos = calc_seek_pos(seek_pos_fraction, &buf_whole);
+        let seek_pos = skip_length(buf_whole.len(), seek_pos_fraction);
         let reported_pos = seek_read_and_verify(
             reader,
             read_size,
@@ -1452,11 +1442,13 @@ mod test {
         #[strategy(0f64..=1f64)] seek_pos_fraction: f64,
     ) {
         let (reader, buf_whole) = prepare_seek_test_data(content, read_size).await;
-        let seek_pos = calc_seek_pos(seek_pos_fraction, &buf_whole);
+        let seek_pos = skip_length(buf_whole.len(), seek_pos_fraction);
         let reported_pos = seek_read_and_verify(
             reader,
             read_size,
-            SeekFrom::End(seek_pos as i64 - buf_whole.len() as i64),
+            SeekFrom::End(
+                i64::try_from(seek_pos).unwrap() - i64::try_from(buf_whole.len()).unwrap(),
+            ),
             buf_whole.as_slice(),
         )
         .await;
@@ -1473,14 +1465,16 @@ mod test {
         #[strategy(0f64..=1f64)] seek_pos2_fraction: f64,
     ) {
         let (mut reader, buf_whole) = prepare_seek_test_data(content, read_size).await;
-        let seek_pos1 = calc_seek_pos(seek_pos1_fraction, &buf_whole);
-        let seek_pos2 = calc_seek_pos(seek_pos2_fraction, &buf_whole);
+        let seek_pos1 = skip_length(buf_whole.len(), seek_pos1_fraction);
+        let seek_pos2 = skip_length(buf_whole.len(), seek_pos2_fraction);
         reader.seek(SeekFrom::Start(seek_pos1)).await.unwrap();
 
         let reported_pos = seek_read_and_verify(
             reader,
             read_size,
-            SeekFrom::Current(seek_pos2 as i64 - seek_pos1 as i64),
+            SeekFrom::Current(
+                i64::try_from(seek_pos2).unwrap() - i64::try_from(seek_pos1).unwrap(),
+            ),
             buf_whole.as_slice(),
         )
         .await;
@@ -1497,9 +1491,9 @@ mod test {
     ) {
         let (mut reader, buf_whole) = prepare_seek_test_data(content, 8192).await;
         for fraction in byte_positions_f {
-            let seek_pos = calc_seek_pos(fraction, &buf_whole);
+            let seek_pos = skip_length(buf_whole.len(), fraction);
 
-            let expected = buf_whole[seek_pos as usize];
+            let expected = buf_whole[usize::try_from(seek_pos).unwrap()];
 
             reader.seek(SeekFrom::Start(seek_pos)).await.unwrap();
             let actual = reader.read_u8().await.unwrap();
@@ -1511,7 +1505,7 @@ mod test {
     #[proptest(async = "tokio")]
     async fn seeking_before_start(distance: u8) {
         let mut reader = pin!(Builder::<&[u8]>::new().build());
-        let seek_offset = -(distance as i64) - 1;
+        let seek_offset = -i64::from(distance) - 1;
         let err = reader
             .seek(SeekFrom::Current(seek_offset))
             .await
@@ -1527,7 +1521,7 @@ mod test {
     #[proptest(async = "tokio")]
     async fn seeking_after_end_from_start(distance: u8) {
         let mut reader = pin!(Builder::<&[u8]>::new().build());
-        let seek_pos = reader.size() + distance as u64;
+        let seek_pos = reader.size() + u64::from(distance);
         let reported_position = reader.seek(SeekFrom::Start(seek_pos)).await.unwrap();
         assert!(reported_position == seek_pos);
 
@@ -1539,9 +1533,9 @@ mod test {
     #[proptest(async = "tokio")]
     async fn seeking_after_end_from_current(distance: u8) {
         let mut reader = pin!(Builder::<&[u8]>::new().build());
-        let seek_position = reader.size() as i64 + distance as i64;
+        let seek_position = i64::try_from(reader.size()).unwrap() + i64::from(distance);
         let reported_position = reader.seek(SeekFrom::Current(seek_position)).await.unwrap();
-        assert!(reported_position == seek_position as u64);
+        assert!(reported_position == u64::try_from(seek_position).unwrap());
 
         let remaining_content = read_to_vec(reader, 16).await.unwrap();
         assert!(remaining_content.is_empty());
@@ -1557,7 +1551,7 @@ mod test {
         let (mut reader, buf_whole) = prepare_seek_test_data(content, read_size).await;
         dbg!(buf_whole.len());
         assert!(reader.tell() == 0);
-        let seek_pos = calc_seek_pos(seek_pos_fraction, &buf_whole);
+        let seek_pos = skip_length(buf_whole.len(), seek_pos_fraction);
         reader.seek(SeekFrom::Start(seek_pos)).await.unwrap();
         assert!(reader.tell() == seek_pos);
         dbg!(seek_pos);
@@ -1620,23 +1614,23 @@ mod test {
 
         #[tokio::test]
         async fn reported_too_short_before_reported_size() {
-            test_internal(10, 20, 5).await
+            test_internal(10, 20, 5).await;
         }
 
         #[tokio::test]
-        #[should_panic] //TODO: This kind of bad input can't be detected at the moment.
+        #[should_panic(expected = "called `Result::unwrap_err()` on an `Ok` value")] //TODO: This kind of bad input can't be detected at the moment.
         async fn reported_too_short_after_reported_size() {
-            test_internal(10, 20, 15).await
+            test_internal(10, 20, 15).await;
         }
 
         #[tokio::test]
         async fn reported_too_long_before_real_size() {
-            test_internal(20, 10, 5).await
+            test_internal(20, 10, 5).await;
         }
 
         #[tokio::test]
         async fn reported_too_long_after_real_size() {
-            test_internal(20, 10, 15).await
+            test_internal(20, 10, 15).await;
         }
     }
 
@@ -1700,27 +1694,27 @@ mod test {
 
             assert!(
                 zip_after_seek.as_slice() == &whole_zip[whole_zip.len() - zip_after_seek.len()..]
-            )
+            );
         }
 
         #[proptest(async = "tokio")]
         async fn cached_crc_seek_within(test_data: Vec<u8>) {
-            test_internal(test_data.as_slice(), true, false).await
+            test_internal(test_data.as_slice(), true, false).await;
         }
 
         #[proptest(async = "tokio")]
         async fn cached_crc_seek_past(test_data: Vec<u8>) {
-            test_internal(test_data.as_slice(), true, true).await
+            test_internal(test_data.as_slice(), true, true).await;
         }
 
         #[proptest(async = "tokio")]
         async fn no_cached_crc_seek_within(test_data: Vec<u8>) {
-            test_internal(test_data.as_slice(), false, false).await
+            test_internal(test_data.as_slice(), false, false).await;
         }
 
         #[proptest(async = "tokio")]
         async fn no_cached_crc_seek_past(test_data: Vec<u8>) {
-            test_internal(test_data.as_slice(), false, true).await
+            test_internal(test_data.as_slice(), false, true).await;
         }
     }
 
@@ -1763,7 +1757,7 @@ mod test {
         #[strategy(read_size_strategy())] read_size: usize,
         #[strategy(0f64..=1f64)] seek_pos_fraction: f64,
     ) {
-        let seek_pos = (seek_pos_fraction * reader.size() as f64).floor() as u64;
+        let seek_pos = skip_length(usize::try_from(reader.size()).unwrap(), seek_pos_fraction);
         reader.seek_from_start_mut(seek_pos);
 
         let cloned = pin!(reader.clone());

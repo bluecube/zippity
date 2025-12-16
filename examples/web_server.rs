@@ -1,3 +1,5 @@
+#![allow(clippy::print_stdout)]
+
 use actix_web::{
     App, HttpResponse, HttpServer, Responder, get, http::header::ContentDisposition, web,
 };
@@ -20,8 +22,8 @@ async fn zip_endpoint(
         .get("seed")
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(0);
-    let file_name = format!("zippity_example-{}.zip", seed);
-    let directory_name = format!("zippity_example-{}/", seed);
+    let file_name = format!("zippity_example-{seed}.zip");
+    let directory_name = format!("zippity_example-{seed}/");
     let mut builder = Builder::<Vec<u8>>::new();
     for i in 0..5 {
         let data = make_svg(seed, i);
@@ -61,9 +63,9 @@ async fn index() -> impl Responder {
 
 fn make_svg(seed: u64, i: usize) -> Vec<u8> {
     let mut rng_state =
-        ((seed.wrapping_mul(31).wrapping_add(i as u64)).wrapping_mul(0xabcdef)) & 0xffffff;
+        ((seed.wrapping_mul(31).wrapping_add(i as u64)).wrapping_mul(0xab_cdef)) & 0xff_ffff;
     let mut random = || {
-        rng_state = (rng_state.wrapping_mul(0x9087654).wrapping_add(0x123456)) & 0xffffff;
+        rng_state = (rng_state.wrapping_mul(0x908_7654).wrapping_add(0x12_3456)) & 0xff_ffff;
         rng_state
     };
     // simple random-color rect based on seed + i

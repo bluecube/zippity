@@ -1,3 +1,5 @@
+#![allow(clippy::print_stdout)]
+
 use std::path::PathBuf;
 
 use clap::Parser;

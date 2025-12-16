@@ -14,13 +14,12 @@ pub trait EntryData {
     /// Returns a future that when awaited will provide the reader for file data.
     fn get_reader(&self) -> Self::Future;
 
-    /// Returns the size of the data of the entry, that will be read through get_reader.
-    /// This is allowed to
+    /// Returns the size of the data of the entry, that will be read through `get_reader`.
     fn size(&self) -> u64;
 }
 
 /// A trait for reading and seeking entry data.
-/// Similar to AsyncRead + AsyncSeek but takes a reference to the entry data,
+/// Similar to `AsyncRead` + `AsyncSeek` but takes a reference to the entry data,
 /// allowing readers to borrow data from the entry instead of requiring ownership.
 pub trait EntryReader<D: ?Sized> {
     fn poll_read(
@@ -39,7 +38,7 @@ pub trait EntryReader<D: ?Sized> {
     ) -> Poll<Result<u64>>;
 }
 
-/// Blanket implementation for types that already implement AsyncRead + AsyncSeek.
+/// Blanket implementation for types that already implement `AsyncRead` + `AsyncSeek`.
 /// The data parameter is ignored since these types don't need it.
 impl<D, T: AsyncRead + AsyncSeek> EntryReader<D> for T {
     fn poll_read(
@@ -64,9 +63,9 @@ impl<D, T: AsyncRead + AsyncSeek> EntryReader<D> for T {
     }
 }
 
-/// A reader for types that implement AsRef<[u8]>.
-/// Borrows data on each read via AsRef::as_ref().
-/// Seeking behavior matches std::io::Cursor.
+/// A reader for types that implement `AsRef<[u8]>`.
+/// Borrows data on each read via `AsRef::as_ref()`.
+/// Seeking behavior matches `std::io::Cursor`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AsRefReader {
     position: usize,
@@ -82,9 +81,8 @@ impl<T: AsRef<[u8]>> EntryReader<T> for AsRefReader {
         let slice = data.as_ref();
 
         // Use slice.get() for bounds checking - returns None if position is past the end
-        let remaining = match slice.get(self.position..) {
-            Some(remaining) => remaining,
-            None => return Poll::Ready(Ok(())), // EOF
+        let Some(remaining) = slice.get(self.position..) else {
+            return Poll::Ready(Ok(()));
         };
 
         let to_read = remaining.len().min(buf.remaining());
@@ -126,8 +124,8 @@ impl<T: AsRef<[u8]>> EntryReader<T> for AsRefReader {
     }
 }
 
-/// Blanket implementation for types that implement AsRef<[u8]>.
-/// This covers &[u8], Vec<u8>, String, Box<[u8]>, Arc<[u8]>, Bytes, etc.
+/// Blanket implementation for types that implement `AsRef<[u8]>`.
+/// This covers `&[u8]`, `Vec<u8>`, `String`, `Box<[u8]>`, `Arc<[u8]>`, `Bytes`, etc.
 impl<T: AsRef<[u8]>> EntryData for T {
     type Reader = AsRefReader;
     type Future = Ready<Result<Self::Reader>>;

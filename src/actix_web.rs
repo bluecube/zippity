@@ -32,7 +32,7 @@ impl<D: EntryData> Reader<D> {
     /// Also returns a oneshot channel receiver that receives a Reader remaining state after the actix web adapter
     /// is dropped.
     /// This is useful to retrieve calculated CRCs after the zip file is served.
-    /// See Reader::take_pinned(), Reader::crc32s()
+    /// See `Reader::take_pinned()`, `Reader::crc32s()`
     pub fn into_responder_with_channel(self) -> (ActixWebAdapter<D>, oneshot::Receiver<Reader<D>>) {
         let (sender, receiver) = oneshot::channel();
         let adapter = ActixWebAdapter {
@@ -72,7 +72,7 @@ impl<D: EntryData + 'static> actix_web::Responder for ActixWebAdapter<D> {
                 return response.status(StatusCode::BAD_REQUEST).finish();
             };
             let Some(validated) = parsed.validate(size).ok() else {
-                response.insert_header((CONTENT_RANGE, format!("bytes */{}", size)));
+                response.insert_header((CONTENT_RANGE, format!("bytes */{size}")));
                 return response.status(StatusCode::RANGE_NOT_SATISFIABLE).finish();
             };
             let range = validated
@@ -170,8 +170,9 @@ impl<D: EntryData + 'static> MessageBody for Body<D> {
         let bytes_stream = projected.inner.project().bytes_stream;
         let block = ready!(bytes_stream.poll_next(cx)).expect("The total number of bytes written is limited, we should never reach the actual end of the stream")?;
 
-        if (block.len() as u64) > *projected.remaining {
-            let limited_len = *projected.remaining as usize; // Just checked that remaining is small
+        if *projected.remaining < (block.len() as u64) {
+            let limited_len =
+                usize::try_from(*projected.remaining).expect("In this branch remaining is small");
             *projected.remaining = 0;
             Poll::Ready(Some(Ok(block.slice(0..limited_len))))
         } else {
@@ -190,7 +191,7 @@ mod test {
     use test_strategy::proptest;
     use tokio::sync::oneshot;
 
-    use crate::{Builder, BytesStream, Reader};
+    use crate::{Builder, BytesStream, Reader, test_util::skip_length};
 
     use super::{Body, Inner};
 
@@ -214,8 +215,8 @@ mod test {
         let content_length = headers
             .get("Content-Length")
             .expect("Response must contain Content-Length");
-        assert!(content_length == format!("{}", size).as_str());
-        assert!(headers.get("Content-Range").is_none())
+        assert!(content_length == format!("{size}").as_str());
+        assert!(headers.get("Content-Range").is_none());
     }
 
     // Test the headers are set as expected when requesting the zip file with range header.
@@ -244,7 +245,7 @@ mod test {
         let content_range = headers
             .get("Content-Range")
             .expect("Response must contain Content-Range");
-        assert!(content_range == format!("bytes 0-5/{}", size).as_str());
+        assert!(content_range == format!("bytes 0-5/{size}").as_str());
     }
 
     /// Tests that reader_and_callback calls the callback on drop
@@ -267,7 +268,7 @@ mod test {
 
     #[proptest(async = "tokio")]
     async fn body_size_limiting(reader: Reader<Vec<u8>>, #[strategy(0f64..=1f64)] size_f: f64) {
-        let read_length = (reader.size() as f64 * size_f).floor() as u64;
+        let read_length = skip_length(usize::try_from(reader.size()).unwrap(), size_f);
 
         let mut body = pin!(Body::new(reader.into_responder().inner, read_length));
 

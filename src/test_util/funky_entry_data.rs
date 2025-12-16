@@ -17,7 +17,7 @@ pub struct Zeros {
     remaining: u64,
 }
 
-/// EntryData implementation (+ its own reader), that reads only zeros
+/// `EntryData` implementation (+ its own reader), that reads only zeros
 impl Zeros {
     pub fn new(size: u64) -> Self {
         Zeros {
@@ -35,8 +35,9 @@ impl AsyncRead for Zeros {
     ) -> Poll<std::io::Result<()>> {
         if self.remaining > 0 {
             let n = self.remaining.min(buf.remaining() as u64);
-            buf.initialize_unfilled_to(n as usize).fill(0);
-            buf.advance(n as usize);
+            let n_usize = usize::try_from(n).expect("n is lower than buf.remaining()");
+            buf.initialize_unfilled_to(n_usize).fill(0);
+            buf.advance(n_usize);
             *self.project().remaining -= n;
         }
         Poll::Ready(Ok(()))
@@ -49,7 +50,7 @@ impl AsyncSeek for Zeros {
             std::io::SeekFrom::Start(pos) => *self.project().remaining = self.size - pos,
             std::io::SeekFrom::End(_) => unimplemented!(),
             std::io::SeekFrom::Current(_) => unimplemented!(),
-        };
+        }
         Ok(())
     }
 
@@ -74,7 +75,7 @@ impl EntryData for Zeros {
     }
 }
 
-/// EntryData implementation (+ its own reader) that provides data from a u8 slice,
+/// `EntryData` implementation (+ its own reader) that provides data from a u8 slice,
 /// but alternates returning pending and ready on all futures calls.
 #[pin_project]
 pub struct LazyReader<'a> {
@@ -101,11 +102,11 @@ impl AsyncRead for LazyReader<'_> {
         let projected = self.project();
 
         *projected.delay = !*projected.delay;
-        if !*projected.delay {
+        if *projected.delay {
+            projected.inner.poll_read(cx, buf)
+        } else {
             cx.waker().wake_by_ref();
             Poll::Pending
-        } else {
-            projected.inner.poll_read(cx, buf)
         }
     }
 }
@@ -122,12 +123,11 @@ impl AsyncSeek for LazyReader<'_> {
         let projected = self.project();
 
         *projected.delay = !*projected.delay;
-        if !*projected.delay {
+        if *projected.delay {
+            projected.inner.poll_complete(cx)
+        } else {
             cx.waker().wake_by_ref();
             Poll::Pending
-        } else {
-            *projected.delay = true;
-            projected.inner.poll_complete(cx)
         }
     }
 }
@@ -142,14 +142,14 @@ impl<'a> Future for LazyReaderFuture<'a> {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         self.delay = !self.delay;
-        if !self.delay {
-            cx.waker().wake_by_ref();
-            Poll::Pending
-        } else {
+        if self.delay {
             Poll::Ready(Result::Ok(LazyReader {
                 inner: Cursor::new(self.data),
                 delay: true,
             }))
+        } else {
+            cx.waker().wake_by_ref();
+            Poll::Pending
         }
     }
 }

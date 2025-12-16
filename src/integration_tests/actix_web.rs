@@ -2,7 +2,10 @@ use std::{io::SeekFrom, ops::Deref, pin::pin, sync::Arc};
 
 use crate::{
     Builder, Reader,
-    test_util::test_entry_data::{ReaderAndData, TestEntryData},
+    test_util::{
+        skip_length,
+        test_entry_data::{ReaderAndData, TestEntryData},
+    },
 };
 use actix_test::TestServer;
 use actix_web::{App, Responder, web};
@@ -123,8 +126,16 @@ async fn read_block(
         .0
     );
 
-    let start = (boundary1.min(boundary2) * direct_read_result.len() as f64).floor() as usize;
-    let end = (boundary1.max(boundary2) * direct_read_result.len() as f64).floor() as usize;
+    let start = usize::try_from(skip_length(
+        direct_read_result.len(),
+        boundary1.min(boundary2),
+    ))
+    .unwrap();
+    let end = usize::try_from(skip_length(
+        direct_read_result.len(),
+        boundary1.max(boundary2),
+    ))
+    .unwrap();
 
     http_reader
         .seek(SeekFrom::Start(start as u64))

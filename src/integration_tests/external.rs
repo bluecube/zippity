@@ -30,14 +30,15 @@ async fn external_command_test<F: FnOnce(&Path) -> Command>(
         .await
         .expect("Could not run command");
 
-    if !unzip_output.status.success() {
-        // temp_path.persist("/tmp/bad.zip").unwrap();
-        panic!(
-            "command failed\nstdout:\n{}\nstderr:\n{}",
-            std::str::from_utf8(&unzip_output.stdout).unwrap(),
-            std::str::from_utf8(&unzip_output.stderr).unwrap()
-        );
-    }
+    // if !unzip_output.status.success() {
+    // temp_path.persist("/tmp/bad.zip").unwrap();
+    // }
+    assert!(
+        unzip_output.status.success(),
+        "command failed\nstdout:\n{}\nstderr:\n{}",
+        std::str::from_utf8(&unzip_output.stdout).unwrap(),
+        std::str::from_utf8(&unzip_output.stderr).unwrap()
+    );
 
     unzip_output.stdout
 }

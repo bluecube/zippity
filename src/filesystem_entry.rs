@@ -2,7 +2,6 @@ use std::{
     fs::Metadata,
     future::Future,
     io::Cursor,
-    ops::DerefMut,
     path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
@@ -18,11 +17,11 @@ use tokio::{
 
 use crate::{Builder, BuilderEntry, EntryData, Error};
 
-/// An EntryData implementation representing a filesystem object -- file, directory or symlink.
+/// An `EntryData` implementation representing a filesystem object -- file, directory or symlink.
 ///
-/// Constructing this structure directly through new() gives the most versatile interface, but
-/// `Builder::add_filesystem_entry` or `Builder::add_directory_recursive` can be used as simpler
-/// (and more opinionated) alternatives.
+/// Constructing this structure directly through `FilesystemEntry::with_metadata()` gives the most
+/// versatile interface, but `Builder::add_filesystem_entry` or `Builder::add_directory_recursive`
+/// can be used as simpler (and more opinionated) alternatives.
 #[derive(Debug, Clone)]
 pub struct FilesystemEntry {
     path: PathBuf,
@@ -37,7 +36,9 @@ enum EntryType {
 }
 
 impl FilesystemEntry {
-    /// Constructs a new FilesystemEntry, with entry metadata given from outside.
+    /// Constructs a new `FilesystemEntry`, with entry metadata given from outside.
+    /// # Errors
+    /// Fails if retreiving the metadata (or link target) of the path fails.
     pub async fn with_metadata(path: PathBuf, metadata: &Metadata) -> Result<Self, Error> {
         let entry_type = EntryType::with_metadata(&path, metadata).await?;
         Ok(FilesystemEntry { path, entry_type })
@@ -105,7 +106,7 @@ impl Future for FilesystemEntryFuture {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // FilesystemEntryFuture is Unpin, because it only contains the future through Pin<Box<_>>.
-        match self.deref_mut() {
+        match &mut *self {
             FilesystemEntryFuture::File { file_future } => {
                 let inner_reader = ready!(file_future.as_mut().poll(cx))?;
                 Poll::Ready(Ok(FilesystemEntryReader::File(inner_reader)))
@@ -154,7 +155,7 @@ impl AsyncSeek for FilesystemEntryReader {
     }
 }
 
-/// Modifies the entry_name to have no trailing slashes for files and one trailig slash for directories
+/// Modifies the `entry_name` to have no trailing slashes for files and one trailig slash for directories
 fn sanitize_entry_name_slashes(mut entry_name: String, is_directory: bool) -> String {
     entry_name.truncate(entry_name.trim_end_matches('/').len());
     if is_directory {
@@ -190,7 +191,7 @@ fn make_entry_name(
     debug_assert!(!path.is_empty());
     let trailing_slash = if is_directory { "/" } else { "" };
 
-    format!("{}{}{}{}", root_name, root_separator, path, trailing_slash)
+    format!("{root_name}{root_separator}{path}{trailing_slash}")
 }
 
 impl Builder<FilesystemEntry> {
@@ -198,12 +199,14 @@ impl Builder<FilesystemEntry> {
     /// This method handles setting entry type, permissions and modification time from the metadata
     /// and modifies the entry name to include a final slash for directories (or remove the slash for non-directories).
     /// Symlinks are added as symlink type, not followed.
+    /// # Errors
+    /// Forwards errors from `FilesystemEntry::with_metadata` and `Builder::add_entry`.
     pub async fn add_filesystem_entry(
         &mut self,
         name: String,
         path: PathBuf,
         metadata: &Metadata,
-    ) -> std::result::Result<&mut BuilderEntry<FilesystemEntry>, Error> {
+    ) -> Result<&mut BuilderEntry<FilesystemEntry>, Error> {
         let fs_entry = FilesystemEntry::with_metadata(path, metadata).await?;
         let name =
             sanitize_entry_name_slashes(name, matches!(fs_entry.entry_type, EntryType::Directory));
@@ -218,6 +221,8 @@ impl Builder<FilesystemEntry> {
     /// If `root_name` is Some, it is used as a prefix for all entry names, separated by a slash
     /// and also the root directory is added as a separate directory entry.
     /// If `root_name` is Some and contains slashes itself, its parent directories are not added as zip entries.
+    /// # Errors
+    /// Forwards errors from `FilesystemEntry::with_metadata` and `Builder::add_entry`, or io errors from directory traversal.
     pub async fn add_directory_recursive(
         &mut self,
         directory: PathBuf,
@@ -407,7 +412,7 @@ mod test {
     #[cfg(unix)]
     #[proptest(async = "tokio")]
     async fn file_dir_symlink_seek(#[strategy(0f64..1f64)] seek_pos: f64) {
-        use crate::test_util::prepare_test_dir;
+        use crate::test_util::{prepare_test_dir, skip_length};
         use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
         let tempdir = prepare_test_dir();
@@ -420,7 +425,7 @@ mod test {
         let mut whole_reader = pin!(builder.clone().build());
         let whole_zip = read_to_vec(whole_reader.as_mut(), 8192).await.unwrap();
 
-        let seek_pos = (seek_pos * whole_zip.len() as f64).floor() as u64;
+        let seek_pos = skip_length(whole_zip.len(), seek_pos);
         // Insert CRC32s from the first reader to the second builder.
         // Not having to recalcualte the CRC makes the second reader actually seek in
         // the file, not just read the whole thing and ignore the beginning.
@@ -435,6 +440,6 @@ mod test {
             .unwrap();
         let byte = reader.read_u8().await.unwrap();
 
-        assert!(byte == whole_zip[seek_pos as usize]);
+        assert!(byte == whole_zip[usize::try_from(seek_pos).unwrap()]);
     }
 }

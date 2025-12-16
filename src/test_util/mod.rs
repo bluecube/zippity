@@ -67,13 +67,12 @@ pub async fn measure_size(mut reader: Pin<&mut impl AsyncRead>) -> Result<u64> {
         let read_size = reader.read(buffer.as_mut_slice()).await?;
         if read_size == 0 {
             return Ok(size);
-        } else {
-            size += read_size as u64;
         }
+        size += read_size as u64;
     }
 }
 
-/// Helper functions for working with EntryReader
+/// Helper functions for working with `EntryReader`
 pub mod entry_reader {
     use std::io::Result;
     use std::{future::poll_fn, io::SeekFrom, pin::Pin};
@@ -81,7 +80,7 @@ pub mod entry_reader {
 
     use crate::entry_data::EntryReader;
 
-    /// Reads from an EntryReader into a buffer (similar to AsyncReadExt::read)
+    /// Reads from an `EntryReader` into a buffer (similar to `AsyncReadExt::read`)
     pub async fn read<D, R: EntryReader<D>>(
         mut reader: Pin<&mut R>,
         data: &D,
@@ -92,7 +91,7 @@ pub mod entry_reader {
         Ok(read_buf.filled().len())
     }
 
-    /// Reads exact bytes from an EntryReader (similar to AsyncReadExt::read_exact)
+    /// Reads exact bytes from an `EntryReader` (similar to `AsyncReadExt::read_exact`)
     pub async fn read_exact<D, R: EntryReader<D>>(
         mut reader: Pin<&mut R>,
         data: &D,
@@ -112,7 +111,7 @@ pub mod entry_reader {
         Ok(())
     }
 
-    /// Seeks within an EntryReader (similar to AsyncSeekExt::seek)
+    /// Seeks within an `EntryReader` (similar to `AsyncSeekExt::seek`)
     pub async fn seek<D, R: EntryReader<D>>(
         mut reader: Pin<&mut R>,
         data: &D,
@@ -122,7 +121,7 @@ pub mod entry_reader {
         poll_fn(|cx| reader.as_mut().poll_seek_complete(data, cx)).await
     }
 
-    /// Collects all data from an EntryReader to a Vec.
+    /// Collects all data from an `EntryReader` to a `Vec`.
     /// Size of each read can be specified.
     pub async fn read_to_vec<D, R: EntryReader<D>>(
         mut reader: Pin<&mut R>,
@@ -146,7 +145,7 @@ pub mod entry_reader {
         }
     }
 
-    /// Goes through all data from an EntryReader, discarding it,
+    /// Goes through all data from an `EntryReader`, discarding it,
     /// and returns the total number of bytes.
     pub async fn measure_size<D, R: EntryReader<D>>(reader: Pin<&mut R>, data: &D) -> Result<u64> {
         let vec = read_to_vec(reader, data, 8192).await?;
@@ -165,4 +164,18 @@ pub async fn build_and_open<T: EntryData>(
 
     assert!(size == (buf.len() as u64));
     ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip")
+}
+
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
+/// Calculates skip length based on a original length and a fraction between 0 and 1.
+/// Used for testing seek behavior.
+/// Only used in tests, has possible accuracy issues (might not be able to reach every byte).
+pub fn skip_length(len: usize, factor: f64) -> u64 {
+    assert!((0.0..=1.0).contains(&factor));
+
+    (len as f64 * factor) as u64
 }

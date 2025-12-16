@@ -6,6 +6,7 @@ use crate::{
 };
 use assert2::assert;
 use indexmap::IndexMap;
+use std::io::Read;
 use test_strategy::proptest;
 
 #[tokio::test]
@@ -26,7 +27,6 @@ async fn empty_entry_name() {
     let name = std::str::from_utf8(zipfile.name_raw()).unwrap().to_string();
     assert!(name.is_empty());
     let mut file_content = Vec::new();
-    use std::io::Read;
     zipfile.read_to_end(&mut file_content).unwrap();
     assert!(file_content.is_empty());
 }
@@ -46,7 +46,6 @@ async fn archive_with_single_file() {
     let name = std::str::from_utf8(zipfile.name_raw()).unwrap().to_string();
     assert!(name == "Foo");
     let mut file_content = Vec::new();
-    use std::io::Read;
     zipfile.read_to_end(&mut file_content).unwrap();
     assert!(file_content == b"bar!");
 }
@@ -64,7 +63,6 @@ async fn archive_with_single_empty_file() {
     let name = std::str::from_utf8(zipfile.name_raw()).unwrap().to_string();
     assert!(name == "0");
     let mut file_content = Vec::new();
-    use std::io::Read;
     zipfile.read_to_end(&mut file_content).unwrap();
     assert!(file_content == b"");
 }
@@ -81,7 +79,6 @@ async fn any_archive(content: TestEntryData) {
         let mut zipfile = unpacked.by_index(i).unwrap();
         let name = std::str::from_utf8(zipfile.name_raw()).unwrap().to_string();
         let mut file_content = Vec::new();
-        use std::io::Read;
         zipfile.read_to_end(&mut file_content).unwrap();
 
         unpacked_content.insert(name, file_content);
@@ -95,7 +92,7 @@ async fn entry_ordering(entry_names: HashSet<String>) {
 
     let mut builder = Builder::<&[u8]>::new();
 
-    for name in entry_names.iter() {
+    for name in &entry_names {
         builder.add_entry(name.clone(), b"".as_ref()).unwrap();
     }
 
@@ -134,12 +131,12 @@ async fn file_modification_time(
 
     let unpacked_timestamp = unpacked.by_index(0).unwrap().last_modified();
 
-    assert!(unpacked_timestamp.year() == year as u16);
-    assert!(unpacked_timestamp.month() == month as u8);
-    assert!(unpacked_timestamp.day() == day as u8);
-    assert!(unpacked_timestamp.hour() == hour as u8);
-    assert!(unpacked_timestamp.minute() == minute as u8);
-    assert!(unpacked_timestamp.second() == (second & !1) as u8);
+    assert!(unpacked_timestamp.year() == u16::try_from(year).unwrap());
+    assert!(unpacked_timestamp.month() == u8::try_from(month).unwrap());
+    assert!(unpacked_timestamp.day() == u8::try_from(day).unwrap());
+    assert!(unpacked_timestamp.hour() == u8::try_from(hour).unwrap());
+    assert!(unpacked_timestamp.minute() == u8::try_from(minute).unwrap());
+    assert!(unpacked_timestamp.second() == u8::try_from(second & !1).unwrap());
 }
 
 #[tokio::test]
@@ -154,7 +151,7 @@ async fn regular_file_default_permissions() {
 
     let permissions = unpacked.by_index(0).unwrap().unix_mode().unwrap();
 
-    assert!(permissions == 0o100644);
+    assert!(permissions == 0o100_644);
 }
 
 #[tokio::test]
@@ -172,7 +169,7 @@ async fn directory_default_permissions() {
 
     let permissions = unpacked.by_index(0).unwrap().unix_mode().unwrap();
 
-    assert!(permissions == 0o40755);
+    assert!(permissions == 0o40_755);
 }
 
 #[tokio::test]
@@ -190,7 +187,7 @@ async fn regular_file_override_permissions() {
 
     let permissions = unpacked.by_index(0).unwrap().unix_mode().unwrap();
 
-    assert!(permissions == 0o100123);
+    assert!(permissions == 0o100_123);
 }
 
 #[tokio::test]
@@ -209,7 +206,7 @@ async fn directory_override_permissions() {
 
     let permissions = unpacked.by_index(0).unwrap().unix_mode().unwrap();
 
-    assert!(permissions == 0o40123);
+    assert!(permissions == 0o40_123);
 }
 
 #[tokio::test]
@@ -227,8 +224,7 @@ async fn readonly_file_permissions() {
 
     let permissions = unpacked.by_index(0).unwrap().unix_mode().unwrap();
 
-    // Expect readonly file => 0o100444
-    assert!(permissions == 0o100444);
+    assert!(permissions == 0o100_444);
 }
 
 #[tokio::test]
@@ -247,8 +243,7 @@ async fn readonly_directory_permissions() {
 
     let permissions = unpacked.by_index(0).unwrap().unix_mode().unwrap();
 
-    // Expect readonly directory => 0o40555
-    assert!(permissions == 0o40555);
+    assert!(permissions == 0o40_555);
 }
 
 #[tokio::test]
@@ -267,5 +262,5 @@ async fn symlink_permissions() {
 
     let permissions = unpacked.by_index(0).unwrap().unix_mode().unwrap();
 
-    assert!(permissions == 0o120777);
+    assert!(permissions == 0o120_777);
 }

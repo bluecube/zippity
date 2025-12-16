@@ -97,7 +97,6 @@ async fn any_archive_filesystem(#[any((8, 64, 16))] data: Entry) {
         let mut zipfile = unpacked.by_index(i).unwrap();
         let name = std::str::from_utf8(zipfile.name_raw()).unwrap().to_string();
         let mut file_content = Vec::new();
-        use std::io::Read;
         zipfile.read_to_end(&mut file_content).unwrap();
 
         unpacked_content.insert(name, file_content);
@@ -125,7 +124,7 @@ async fn filesystem_file_dir_symlink() {
         .by_name("dir/")
         .expect("Directory must have an entry");
     assert!(unpacked_dir.size() == 0);
-    assert!(unpacked_dir.unix_mode().expect("Must have unix mode") == 0o40755);
+    assert!(unpacked_dir.unix_mode().expect("Must have unix mode") == 0o40_755);
     drop(unpacked_dir);
 
     let mut unpacked_file = unpacked
@@ -134,20 +133,20 @@ async fn filesystem_file_dir_symlink() {
     let mut s = String::new();
     unpacked_file.read_to_string(&mut s).unwrap();
     assert!(s == "Hello world");
-    assert!(unpacked_file.unix_mode().expect("Must have unix mode") == 0o100644);
+    assert!(unpacked_file.unix_mode().expect("Must have unix mode") == 0o100_644);
     drop(unpacked_file);
 
     let mut unpacked_link1 = unpacked.by_name("link1").expect("link must have an entry");
     let mut s = String::new();
     unpacked_link1.read_to_string(&mut s).unwrap();
     assert!(s == "dir/file");
-    assert!(unpacked_link1.unix_mode().expect("Must have unix mode") == 0o120777);
+    assert!(unpacked_link1.unix_mode().expect("Must have unix mode") == 0o120_777);
     drop(unpacked_link1);
 
     let mut unpacked_link2 = unpacked.by_name("link2").expect("link must have an entry");
     let mut s = String::new();
     unpacked_link2.read_to_string(&mut s).unwrap();
     assert!(s == "/foo/bar");
-    assert!(unpacked_link2.unix_mode().expect("Must have unix mode") == 0o120777);
+    assert!(unpacked_link2.unix_mode().expect("Must have unix mode") == 0o120_777);
     drop(unpacked_link2);
 }

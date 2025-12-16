@@ -102,7 +102,7 @@ mod test {
     ) {
         let mut builder_slice: Builder<&[u8]> = Builder::new();
         let mut builder_bytes: Builder<Bytes> = Builder::new();
-        for (name, value) in content.0.iter() {
+        for (name, value) in &content.0 {
             builder_slice
                 .add_entry(name.clone(), value.as_ref())
                 .unwrap();
@@ -126,7 +126,7 @@ mod test {
         #[strategy(read_size_strategy())] read_size: usize,
     ) {
         let mut builder: Builder<Bytes> = Builder::new();
-        for (name, value) in content.0.iter() {
+        for (name, value) in &content.0 {
             builder.add_entry(name.clone(), value.clone()).unwrap();
         }
 

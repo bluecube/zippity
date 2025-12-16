@@ -12,44 +12,6 @@ use tempfile::TempDir;
 #[derive(Clone, Debug)]
 pub struct TestEntryData(pub IndexMap<String, Vec<u8>>);
 
-/// Constructs TestEntryData from a format that is hopefully compatible with the
-/// debug print output of this struct -- you can just copy-paste the debug output
-/// in this macro.
-///
-///Only allows `&str` literals for the keys and `&'static [u8]` for the values.
-///
-/// ## Example
-///
-/// ```
-/// use zippity::test_entry_data;
-///
-/// let data = test_entry_data!{
-///     "entry1": b"some content",
-///     "entry2": b"other content",
-///     "entry3": b"and now for some completely different entry content",
-/// };
-/// assert_eq!(data.0["entry2"].as_ref(), b"other content".as_ref());
-/// assert_eq!(data.0.len(), 3);
-///
-/// let reader: zippity::Reader<_> = data.into();
-/// ```
-#[macro_export]
-macro_rules! test_entry_data {
-    // This implementation is adapted from the indexmap::indexmap! macro.
-    ($($key:literal: $value:literal),* $(,)?) => {
-        {
-            // Note: `stringify!($key)` is just here to consume the repetition,
-            // but we throw away that string literal during constant evaluation.
-            const CAP: usize = <[()]>::len(&[$({ stringify!($key); }),*]);
-            let mut result = $crate::proptest::TestEntryData(indexmap::IndexMap::with_capacity(CAP));
-            $(
-                result.0.insert($key.into(), bytes::Bytes::from_static($value));
-            )*
-            result
-        }
-    };
-}
-
 /// A type that holds both a reader and a hash map with the entries the reader contains.
 #[derive(Clone, Debug)]
 pub struct ReaderAndData {
@@ -189,7 +151,7 @@ impl TestEntryData {
     pub fn make_directory(&self) -> std::io::Result<TempDir> {
         let tmp = TempDir::new()?;
 
-        for (name, value) in self.0.iter() {
+        for (name, value) in &self.0 {
             let path = tmp.as_ref().join(Path::new(&name));
             std::fs::create_dir_all(path.parent().unwrap())?;
             let mut f = std::fs::File::create(path)?;

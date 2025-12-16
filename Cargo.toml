@@ -54,3 +54,24 @@ serde_json = "1.0.128"
 tempfile = "3.10.1"
 test-case = "3.3.1"
 chrono = { version = "0.4.39", features = ["std", "clock"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+
+correctness = "deny"
+suspicious = "deny"
+complexity = "deny"
+perf = "deny"
+style = "warn"
+
+pedantic = "warn"
+similar_names = {level = "allow", priority = 1}
+must_use_candidate = {level = "allow", priority = 1}
+explicit_deref_methods = {level = "allow", priority = 1} # This is allowed because of test_strategy `proptest` macro noise. TODO: set to warn again
+default_trait_access = {level = "allow", priority = 1}
+
+print_stderr = { level = "warn", priority = 1 }
+print_stdout = { level = "warn", priority = 1 }
+unwrap_used = { level = "warn", priority = 1 }

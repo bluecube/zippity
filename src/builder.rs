@@ -28,14 +28,14 @@ pub struct BuilderEntry<D> {
     time_converter: Option<TimeConverter>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum BuilderPermissions {
     Rw,
     Ro,
     UnixPermissions(u32),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum BuilderFileType {
     File,
     Directory,
@@ -227,7 +227,7 @@ impl<D: EntryData> BuilderEntry<D> {
         self
     }
 
-    /// Sets the entry permissions based on fs::Permissions.
+    /// Sets the entry permissions based on `fs::Permissions`.
     /// On unix this is equivalent to calling `unix_permissions` with the output of `permissions.mode()`,
     /// on non-unix systems this sets the file as RO or RW.
     pub fn permissions(&mut self, permissions: &Permissions) -> &mut Self {
@@ -254,7 +254,7 @@ impl<D: EntryData> BuilderEntry<D> {
         self
     }
 
-    /// Sets entry type (directory / symlink / file), unix permissions and modification time from fs::Metadata.
+    /// Sets entry type (directory / symlink / file), unix permissions and modification time from `fs::Metadata`.
     ///
     /// Uses the time converter set by the last call to `Builder::system_time_converter`, or `Builder::system_timezone`.
     /// If the converter is not set, or the date is out of the representable range (1980-1-1 to 2107-12-31),
@@ -320,6 +320,7 @@ impl<D: EntryData + Debug> Debug for Builder<D> {
                     None => &"None",
                 },
             )
+            .field("total_size", &self.total_size)
             .finish()
     }
 }
@@ -346,7 +347,7 @@ impl<D: EntryData> Builder<D> {
     /// # Errors
     /// Will return an error if `name` is longer than `u16::MAX` (limitation of Zip format),
     /// or the given entry name is already present in the archive.
-    /// Will return an error if the size of the zip file would become larger than u64::MAX after the add.
+    /// Will return an error if the size of the zip file would become larger than `u64::MAX` after the add.
     pub fn add_entry<T: Into<D>>(
         &mut self,
         name: String,
@@ -392,13 +393,14 @@ impl<D: EntryData> Builder<D> {
         self.total_size
     }
 
+    #[must_use]
     pub fn build(self) -> Reader<D> {
         // All size calculations in this method add up to self.total_size, so they are guaranteed to not overflow.
         let mut offset: u64 = 0;
         let mut cd_size: u64 = 0;
         let entries = {
             let mut entries = Vec::with_capacity(self.entries.len());
-            for (name, entry) in self.entries.into_iter() {
+            for (name, entry) in self.entries {
                 let entry_data_size = entry.data.size();
                 let offset_before_entry = offset;
                 offset += local_header_size(&name) + entry_data_size;
@@ -462,10 +464,10 @@ impl<D: EntryData> Builder<D> {
     }
 }
 
-/// Creates a converter function suitable for Builder::system_time_converter, that
+/// Creates a converter function suitable for `Builder::system_time_converter`, that
 /// uses chrono and the given timezone to build the field representation.
 ///
-/// This is the internal behavior of Builder::system_time_zone, refactored out
+/// This is the internal behavior of `Builder::system_time_zone`, refactored out
 /// for access during testing.
 #[cfg(feature = "chrono")]
 fn system_timezone_converter<Tz>(
@@ -496,24 +498,23 @@ where
 /// Symlinks have permissions always set to 0o777 and ignore the parameter.
 fn get_external_attributes(file_type: BuilderFileType, permissions: BuilderPermissions) -> u32 {
     let file_type_bits = match file_type {
-        BuilderFileType::File => 0o100000,
-        BuilderFileType::Directory => 0o040000,
-        BuilderFileType::Symlink => 0o120000,
+        BuilderFileType::File => 0o100_000,
+        BuilderFileType::Directory => 0o040_000,
+        BuilderFileType::Symlink => 0o120_000,
     };
 
-    let perm_bits = match file_type {
-        BuilderFileType::Symlink => 0o777,
-        _ => {
-            let executable_bits = match file_type {
-                BuilderFileType::Directory => 0o111,
-                _ => 0,
-            };
+    let perm_bits = if file_type == BuilderFileType::Symlink {
+        0o777
+    } else {
+        let executable_bits = match file_type {
+            BuilderFileType::Directory => 0o111,
+            _ => 0,
+        };
 
-            match permissions {
-                BuilderPermissions::Rw => 0o644 | executable_bits,
-                BuilderPermissions::Ro => 0o444 | executable_bits,
-                BuilderPermissions::UnixPermissions(perms) => perms & 0o777,
-            }
+        match permissions {
+            BuilderPermissions::Rw => 0o644 | executable_bits,
+            BuilderPermissions::Ro => 0o444 | executable_bits,
+            BuilderPermissions::UnixPermissions(perms) => perms & 0o777,
         }
     };
 
@@ -600,7 +601,7 @@ mod test {
         let local_sizes = {
             let mut local_sizes = HashMap::with_capacity(builder.entries.len());
 
-            for (k, v) in builder.entries.iter() {
+            for (k, v) in &builder.entries {
                 local_sizes.insert(k.clone(), local_header_size(k) + v.data.size());
             }
 
@@ -792,7 +793,7 @@ mod test {
     #[test]
     fn unix_permissions_masking() {
         let mut entry = BuilderEntry::new(b"".as_ref(), None);
-        entry.unix_permissions(0o123456);
+        entry.unix_permissions(0o123_456);
 
         assert!(entry.permissions == BuilderPermissions::UnixPermissions(0o456));
     }
@@ -959,7 +960,7 @@ mod test {
 
             let difference = (entry_datetime - creation_time).abs();
 
-            assert!(difference < TimeDelta::seconds(5))
+            assert!(difference < TimeDelta::seconds(5));
         }
     }
 }
