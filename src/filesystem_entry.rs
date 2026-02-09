@@ -328,8 +328,7 @@ mod test {
 
             // Then check that every parent directory of the path is stored
             let mut path = name.as_str();
-            loop {
-                let Some(pos) = path.rfind('/') else { break };
+            while let Some(pos) = path.rfind('/') {
                 let path_with_slash = &path[..=pos];
                 path = &path[..pos];
                 assert!(builder.entries.contains_key(path_with_slash));
