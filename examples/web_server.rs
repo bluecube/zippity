@@ -1,4 +1,5 @@
 #![allow(clippy::print_stdout)]
+//! Example of a ZIP generating enpdpoint using `actix_web`.
 
 use actix_web::{
     App, HttpResponse, HttpServer, Responder, get, http::header::ContentDisposition, web,

@@ -7,14 +7,23 @@ use std::{
 
 use tokio::io::{AsyncRead, AsyncSeek, ReadBuf};
 
+/// A trait for types that can be used as an entryin a zip file.
+///
+/// This trait is used to abstract over different data sources for zip entries,
+/// such as byte slices, vectors, or asynchronous readers.
 pub trait EntryData {
+    /// Type that can be use to read the entry's data.
     type Reader: EntryReader<Self>;
+    /// The future type for obtaining the `Reader`, used in `get_reader`.
     type Future: Future<Output = Result<Self::Reader>>;
 
     /// Returns a future that when awaited will provide the reader for file data.
     fn get_reader(&self) -> Self::Future;
 
     /// Returns the size of the data of the entry, that will be read through `get_reader`.
+    ///
+    /// This size must be accurate, returning wrong size will either cause an [`crate::Error::SizeMismatch`] error,
+    /// or will silently corrupt the ZIP file (depending on the access pattern).
     fn size(&self) -> u64;
 }
 
@@ -64,8 +73,6 @@ impl<D, T: AsyncRead + AsyncSeek> EntryReader<D> for T {
 }
 
 /// A reader for types that implement `AsRef<[u8]>`.
-/// Borrows data on each read via `AsRef::as_ref()`.
-/// Seeking behavior matches `std::io::Cursor`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AsRefReader {
     position: usize,
@@ -80,7 +87,6 @@ impl<T: AsRef<[u8]>> EntryReader<T> for AsRefReader {
     ) -> Poll<Result<()>> {
         let slice = data.as_ref();
 
-        // Use slice.get() for bounds checking - returns None if position is past the end
         let Some(remaining) = slice.get(self.position..) else {
             return Poll::Ready(Ok(()));
         };

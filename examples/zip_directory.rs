@@ -1,4 +1,5 @@
 #![allow(clippy::print_stdout)]
+//! Example that recursively zips a directory on commandline.
 
 use std::path::PathBuf;
 
@@ -31,7 +32,7 @@ async fn main() -> std::io::Result<()> {
         .await?;
     let mut zippity = builder.build();
 
-    println!("Zip file will be {} B large", zippity.size());
+    println!("ZIP file will be {} B large", zippity.size());
 
     let mut output = File::create(args.output).await?;
     io::copy(&mut zippity, &mut output).await?;

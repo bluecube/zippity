@@ -17,6 +17,7 @@ use crate::{Error, structs};
 pub const ZIP64_VERSION_TO_EXTRACT: u8 = 45;
 pub(crate) const READ_SIZE: usize = 8192;
 
+/// Represents an entry inside the [`Reader`].
 #[derive(Clone, Debug)]
 pub(crate) struct ReaderEntry<D: EntryData> {
     name: String,
@@ -26,7 +27,7 @@ pub(crate) struct ReaderEntry<D: EntryData> {
     crc32: Option<u32>,
     datetime: structs::DosDatetime,
     external_attributes: u32,
-    /// Number of bytes of the entry data, cached from `EntryData::size()`
+    /// Number of bytes of the entry data, cached from [`EntryData::size()`]
     size: u64,
 }
 
@@ -56,6 +57,7 @@ impl<D: EntryData> ReaderEntry<D> {
         self.name.as_str()
     }
 
+    /// Obtains a [`EntryData::Reader`] for the entry wrapped in [`CrcReader`], keeping state in the given [`ReaderPinned`].
     fn get_reader<'a>(
         &self,
         mut pinned: Pin<&'a mut ReaderPinned<D>>,
@@ -129,12 +131,15 @@ impl<D: EntryData> ReaderEntry<D> {
     }
 }
 
+/// Describes a block of data inside the ZIP file.
+/// This is either a structure of the ZIP format or entry data.
+/// Serves as a high level "cursor" inside the file, with an offset within the chunk kept separately.
 #[derive(Debug, Default)]
 pub(crate) enum Chunk {
     LocalHeader {
         entry_index: usize,
     },
-    FileData {
+    EntryData {
         entry_index: usize,
     },
     DataDescriptor {
@@ -149,6 +154,8 @@ pub(crate) enum Chunk {
 }
 
 impl Chunk {
+    /// Initializes a new chunk descriptor to either point to the first local header,
+    /// or to EOCD, if this is an empty ZIP.
     fn new<D: EntryData>(entries: &[ReaderEntry<D>]) -> Chunk {
         if entries.is_empty() {
             Chunk::Eocd
@@ -157,6 +164,7 @@ impl Chunk {
         }
     }
 
+    /// Returns size of the current chunk in bytes.
     pub(crate) fn size<D: EntryData>(&self, entries: &[ReaderEntry<D>]) -> u64 {
         match self {
             Chunk::LocalHeader { entry_index } => {
@@ -164,7 +172,7 @@ impl Chunk {
                     + entries[*entry_index].name.len() as u64
                     + structs::Zip64ExtraField::packed_size()
             }
-            Chunk::FileData { entry_index } => entries[*entry_index].size,
+            Chunk::EntryData { entry_index } => entries[*entry_index].size,
             Chunk::DataDescriptor { entry_index: _ } => structs::DataDescriptor64::packed_size(),
             Chunk::CDFileHeader { entry_index } => {
                 structs::CentralDirectoryHeader::packed_size()
@@ -180,12 +188,13 @@ impl Chunk {
         }
     }
 
+    /// Returns a chunk following `self` in the ZIP.
     pub(crate) fn next<D: EntryData>(&self, entries: &[ReaderEntry<D>]) -> Chunk {
         match self {
-            Chunk::LocalHeader { entry_index } => Chunk::FileData {
+            Chunk::LocalHeader { entry_index } => Chunk::EntryData {
                 entry_index: *entry_index,
             },
-            Chunk::FileData { entry_index } => Chunk::DataDescriptor {
+            Chunk::EntryData { entry_index } => Chunk::DataDescriptor {
                 entry_index: *entry_index,
             },
             Chunk::DataDescriptor { entry_index } => {
@@ -210,6 +219,9 @@ impl Chunk {
     }
 }
 
+/// Parts of the Reader state that need to be pinned.
+/// This is a workaround to avoid multiple mutable borrows.
+/// The variant represents a Future that we're waiting on currently.
 #[pin_project(project = ReaderPinnedProj)]
 enum ReaderPinned<D: EntryData> {
     Nothing,
@@ -219,14 +231,14 @@ enum ReaderPinned<D: EntryData> {
 
 /// Parts of the state of reader that don't need pinning.
 /// As a result, these can be accessed using a mutable reference
-/// and can have mutable methods
+/// and can have mutable methods.
 #[derive(Debug, Default)]
 struct ReadState {
     /// Which chunk we are currently reading
     current_chunk: Chunk,
     /// How many bytes did we already read from the current chunk.
     /// Data in staging buffer counts as already processed.
-    /// Used only for verification and for error reporting on `EntryData`.
+    /// Used only for verification and for error reporting on [`EntryData`].
     chunk_processed_size: u64,
     /// Current position in the file (counts bytes written to the output)
     /// This value is returned by tell.
@@ -239,6 +251,12 @@ struct ReadState {
     to_skip: u64,
 }
 
+/// Main entry point for reading a zip file.
+///
+/// This struct allows asynchronous reading and seeking within a zip archive,
+/// abstracting over the underlying data source (`D`).
+///
+/// To construct a reader, use [`crate::Builder`].
 #[pin_project]
 pub struct Reader<D: EntryData> {
     /// Sizes of central directory and whole zip.
@@ -740,7 +758,7 @@ impl ReadState {
                     let entry_index = *entry_index;
                     self.read_local_header(&entries[entry_index], output)
                 }
-                Chunk::FileData { entry_index } => {
+                Chunk::EntryData { entry_index } => {
                     let entry_index = *entry_index;
                     if output.remaining() != initial_remaining {
                         // We have already written something into the output -> interrupt this call, because

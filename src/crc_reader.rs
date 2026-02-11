@@ -9,7 +9,7 @@ use tokio::io::ReadBuf;
 
 use crate::entry_data::EntryReader;
 
-/// Wraps an existing `EntryReader` and calculates CRC32 while reading from it.
+/// Wraps an existing [`EntryReader`] and calculates CRC32 while reading from it.
 #[pin_project]
 pub struct CrcReader<T> {
     #[pin]
@@ -40,7 +40,7 @@ impl<T> CrcReader<T> {
 }
 
 impl<T> CrcReader<T> {
-    /// This is method adapts the two phase seek from `tokio::AsyncSeek` to a simpler
+    /// This is method adapts the two phase seek from [`tokio::io::AsyncSeek`] to a simpler
     /// single call interface similar to `futures::io::AsyncSeek`.
     pub fn seek<D>(
         mut self: Pin<&mut Self>,
@@ -131,7 +131,7 @@ mod test {
     }
 
     /// Verify a known example CRC value.
-    /// The example is taken from [unit tests of crate Zip](https://github.com/zip-rs/zip/blob/75e8f6bab5a6525014f6f52c6eb608ab46de48af/src/crc32.rs#L77)
+    /// The example is taken from [unit tests of crate `zip`](https://github.com/zip-rs/zip/blob/75e8f6bab5a6525014f6f52c6eb608ab46de48af/src/crc32.rs#L77)
     #[tokio::test]
     async fn known_crc() {
         let data: &[u8] = b"1234";

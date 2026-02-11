@@ -18,6 +18,8 @@ use crate::{
 
 type TimeConverter = Rc<dyn Fn(SystemTime) -> (i32, u32, u32, u32, u32, u32)>;
 
+/// Represents a ZIP file entry in the metadata building phase.
+/// Reference to this struct is returned when adding a new entry and allows modifying its metadata.
 #[derive(Clone)]
 pub struct BuilderEntry<D> {
     data: D,
@@ -303,7 +305,7 @@ fn eocd_size() -> u64 {
 /// Represents entries of the zip file, which can be converted to a `Reader`.
 #[derive(Clone)]
 pub struct Builder<D: EntryData> {
-    pub entries: IndexMap<String, BuilderEntry<D>>,
+    pub(crate) entries: IndexMap<String, BuilderEntry<D>>,
     time_converter: Option<TimeConverter>,
     /// Total size of the zip.
     total_size: u64,
@@ -393,6 +395,7 @@ impl<D: EntryData> Builder<D> {
         self.total_size
     }
 
+    /// Stops the build phase of the zi file and converts the builder into [`Reader`].
     #[must_use]
     pub fn build(self) -> Reader<D> {
         // All size calculations in this method add up to self.total_size, so they are guaranteed to not overflow.

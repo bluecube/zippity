@@ -163,7 +163,7 @@ pub async fn build_and_open<T: EntryData>(
     zippity.read_to_end(&mut buf).await.unwrap();
 
     assert!(size == (buf.len() as u64));
-    ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid zip")
+    ZipArchive::new(std::io::Cursor::new(buf)).expect("Should be a valid ZIP")
 }
 
 #[allow(

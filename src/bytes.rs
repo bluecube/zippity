@@ -11,6 +11,10 @@ use tokio_util::io::poll_read_buf;
 
 use crate::{Reader, entry_data::EntryData, reader::READ_SIZE};
 
+/// A stream that wraps a [`Reader`] and yields [`Bytes`] chunks.
+///
+/// This is useful for streaming the output of the ZIP reader, for example,
+/// to a network socket or other byte-based sink.
 #[derive(Clone, Debug)]
 #[pin_project]
 pub struct BytesStream<D: EntryData> {
@@ -45,6 +49,7 @@ impl<D: EntryData> Stream for BytesStream<D> {
 }
 
 impl<D: EntryData> BytesStream<D> {
+    /// Wraps a `Reader` into a new `BytesStream`.
     pub fn new(reader: Reader<D>) -> Self {
         BytesStream {
             reader,
@@ -52,18 +57,22 @@ impl<D: EntryData> BytesStream<D> {
         }
     }
 
+    /// Consumes the `BytesStream` and returns the inner `Reader`.
     pub fn into_reader(self) -> Reader<D> {
         self.reader
     }
 
+    /// Returns an immutable reference to the inner `Reader`.
     pub fn reader_ref(&self) -> &Reader<D> {
         &self.reader
     }
 
+    /// Returns a mutable reference to the inner `Reader`.
     pub fn reader_mut(&mut self) -> &mut Reader<D> {
         &mut self.reader
     }
 
+    /// Returns a pinned mutable reference to the inner `Reader`.
     pub fn reader_pin_mut(self: Pin<&mut Self>) -> Pin<&mut Reader<D>> {
         self.project().reader
     }
@@ -76,6 +85,7 @@ impl<D: EntryData> From<Reader<D>> for BytesStream<D> {
 }
 
 impl<D: EntryData> Reader<D> {
+    /// Wraps a `Reader` into a new `BytesStream`.
     pub fn into_bytes_stream(self) -> BytesStream<D> {
         BytesStream::new(self)
     }

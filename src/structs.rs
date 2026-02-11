@@ -3,8 +3,8 @@
 use packed_struct::prelude::*;
 
 /// Local file header
-/// Preceedes every file.
-/// Must be followed by file name nad extra fields (length is part of this struct)
+/// Preceedes every file entry.
+/// Must be followed by file name and extra fields (length is part of this struct)
 #[derive(Debug, PackedStruct)]
 #[packed_struct(endian = "lsb")]
 pub struct LocalFileHeader {
@@ -74,7 +74,7 @@ impl DataDescriptor64 {
 }
 
 /// Central directory header
-/// On per each file, placed in central directory.
+/// On per each entry, placed in central directory.
 #[derive(Debug, PackedStruct)]
 #[packed_struct(endian = "lsb")]
 pub struct CentralDirectoryHeader {
