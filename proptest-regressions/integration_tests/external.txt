@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 42d2aff73343bab7dd47a6560cd19883a703d6a6ab4361cae800a437a79dcf30 # shrinks to input = _PythonZipfileArgs { data: TestEntryData({"": [0]}) }
+cc fe9dbfbbb7ff134c4d0854c98d9af7317cf4ebd4680c7dfcca9934f890b48594 # shrinks to input = _UnzipTArgs { data: TestEntryData({"A": [0]}) }

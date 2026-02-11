@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 6952fb6040b00ab8090e0db87a4cbc3f5090a02807a02fcbde2f37e22d7ddeea # shrinks to input = _CachedCrcSeekPastArgs { test_data: [0] }
+cc 40b6da86a952711c2c01c0abacd962ab930c01540ceb2cf6e07c92848ebefc1c # shrinks to input = _CloneArgs { reader: zippity::Reader { .. }, read_size: 3644, seek_pos_fraction: 0.5082258396363203 }

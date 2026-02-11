@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc d31daf9288ae2f2f3213a46b7a4c128d127173bdc0c9d42a99a1ccd996c6b42b # shrinks to input = _AnyArchiveArgs { content: TestEntryData({"": [0]}) }

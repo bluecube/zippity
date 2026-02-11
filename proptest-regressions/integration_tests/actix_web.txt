@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc e27fa69560534fe5802c9043742fd2be311c109a48c0406bbf774c0841392052 # shrinks to input = _ReadBlockArgs { data: ReaderAndData { reader: zippity::Reader { .. }, data: TestEntryData({"": [0]}) }, use_callback: false, boundary1: 0.0, boundary2: 0.0 }
+cc 36972171172245a071a782a605765c4466af8a1e275b8e408229f1184bda4969 # shrinks to input = _ReadAllArgs { data: ReaderAndData { reader: zippity::Reader { .. }, data: TestEntryData({"": [0]}) }, use_callback: false }

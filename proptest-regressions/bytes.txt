@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc d725dc0e0e94478a073d81f0e3fffba411bf354c3250a9f0a1d889bd5d0da026 # shrinks to input = _BytesStreamProvidesCorrectDataArgs { content: TestEntryData({"": [0]}), read_size: 8192 }
+cc d6c91e3e9fc06a427949219a759d627a9f8280a6ebd70b58a04f6bc60e02f673 # shrinks to input = _BytesAndU8SliceGiveIdenticalResultsArgs { content: TestEntryData({"": [0]}), read_size: 8192 }

@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 406823f03721aa2ed9320f9023c495f7429ec0aa4d1922b97c63120b4cfac925 # shrinks to input = _BodySizeLimitingArgs { reader: zippity::Reader { .. }, size_f: 0.4503459887919688 }
