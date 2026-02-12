@@ -22,7 +22,7 @@ pub trait EntryData {
 
     /// Returns the size of the data of the entry, that will be read through `get_reader`.
     ///
-    /// This size must be accurate, returning wrong size will either cause an [`crate::Error::SizeMismatch`] error,
+    /// This size must be accurate, returning wrong size will either cause an [`crate::ReadError::SizeMismatch`] error,
     /// or will silently corrupt the ZIP file (depending on the access pattern).
     fn size(&self) -> u64;
 }

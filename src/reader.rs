@@ -6,12 +6,13 @@ use std::task::{Context, Poll, ready};
 use assert2::assert;
 use packed_struct::{PackedStruct, PackedStructSlice};
 use pin_project::pin_project;
+use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncSeek, ReadBuf};
 
 use crate::crc_reader::CrcReader;
 use crate::entry_data::{EntryData, EntryReader as _};
-use crate::structs::PackedStructZippityExt;
-use crate::{Error, structs};
+use crate::structs;
+use crate::structs::PackedStructZippityExt as _;
 
 /// Minimum version needed to extract the zip64 extensions required by zippity
 pub const ZIP64_VERSION_TO_EXTRACT: u8 = 45;
@@ -270,6 +271,43 @@ pub struct Reader<D: EntryData> {
     /// Nested futures that need to be kept pinned, also used as a secondary state,
     #[pin]
     pinned: ReaderPinned<D>,
+}
+
+/// Represents an error that can occur during ZIP file reading or seeking.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum ReadError {
+    /// Entry reports a size that does not match the actual size.
+    #[error("Entry {entry_name} reports size {expected_size} B, but was {actual_size} B")]
+    SizeMismatch {
+        /// The name of the entry.
+        entry_name: String,
+        /// The expected size of the entry.
+        expected_size: u64,
+        /// The actual size of the entry.
+        actual_size: u64,
+    },
+    /// Entry was given a CRC value that does not match the computed one.
+    #[error(
+        "Entry {entry_name} was given a CRC value {expected_crc:08x} that does not match the computed {actual_crc:08x}"
+    )]
+    Crc32Mismatch {
+        /// The name of the entry.
+        entry_name: String,
+        /// The expected CRC32 value.
+        expected_crc: u32,
+        /// The actual CRC32 value.
+        actual_crc: u32,
+    },
+    /// Attempting to seek before the start of the file.
+    #[error("Attempting to seek before the start of the file")]
+    SeekingBeforeStart,
+}
+
+impl From<ReadError> for std::io::Error {
+    fn from(value: ReadError) -> Self {
+        std::io::Error::other(value)
+    }
 }
 
 impl<D: EntryData> Reader<D> {
@@ -548,7 +586,7 @@ impl ReadState {
                 if let Some(expected_crc) = entry.crc32
                     && expected_crc != actual_crc
                 {
-                    return Poll::Ready(Err(Error::Crc32Mismatch {
+                    return Poll::Ready(Err(ReadError::Crc32Mismatch {
                         entry_name: entry.name.clone(),
                         expected_crc,
                         actual_crc,
@@ -563,7 +601,7 @@ impl ReadState {
             if self.chunk_processed_size == entry.size {
                 Poll::Ready(Ok(true)) // We're done with this state
             } else {
-                Poll::Ready(Err(Error::SizeMismatch {
+                Poll::Ready(Err(ReadError::SizeMismatch {
                     entry_name: entry.name.clone(),
                     expected_size: entry.size,
                     actual_size: self.chunk_processed_size,
@@ -914,7 +952,7 @@ impl<D: EntryData> AsyncSeek for Reader<D> {
             } else if offset < 0 {
                 Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    Error::SeekingBeforeStart,
+                    ReadError::SeekingBeforeStart,
                 ))
             } else {
                 core::panic!("Attempting to seek to a position that causes u64 overflow");

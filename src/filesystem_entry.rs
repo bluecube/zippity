@@ -15,7 +15,7 @@ use tokio::{
     io::{AsyncRead, AsyncSeek, ReadBuf},
 };
 
-use crate::{Builder, BuilderEntry, EntryData, Error};
+use crate::{Builder, BuilderEntry, EntryData, builder::AddEntryError};
 
 /// An `EntryData` implementation representing a filesystem object -- file, directory or symlink.
 ///
@@ -38,8 +38,8 @@ enum EntryType {
 impl FilesystemEntry {
     /// Constructs a new `FilesystemEntry`, with entry metadata given from outside.
     /// # Errors
-    /// Fails if retreiving the metadata (or link target) of the path fails.
-    pub async fn with_metadata(path: PathBuf, metadata: &Metadata) -> Result<Self, Error> {
+    /// Fails if reading link target fails.
+    pub async fn with_metadata(path: PathBuf, metadata: &Metadata) -> std::io::Result<Self> {
         let entry_type = EntryType::with_metadata(&path, metadata).await?;
         Ok(FilesystemEntry { path, entry_type })
     }
@@ -48,13 +48,13 @@ impl FilesystemEntry {
 impl EntryType {
     /// Constructs the entry type with already extracted metadata.
     /// This helps avoid repeated redundant calls of `metadata()`.
-    async fn with_metadata(path: &Path, metadata: &Metadata) -> Result<Self, Error> {
+    /// # Errors
+    /// Fails if reading link target fails.
+    async fn with_metadata(path: &Path, metadata: &Metadata) -> std::io::Result<Self> {
         if metadata.is_dir() {
             Ok(EntryType::Directory)
         } else if metadata.is_symlink() {
-            let target = read_link(path)
-                .await
-                .map_err(|e| Error::ReadlinkFailed { source: e })?;
+            let target = read_link(path).await?;
             Ok(EntryType::Symlink {
                 target_bytes: target.as_os_str().as_encoded_bytes().into(),
             })
@@ -211,7 +211,7 @@ impl Builder<FilesystemEntry> {
         name: String,
         path: PathBuf,
         metadata: &Metadata,
-    ) -> Result<&mut BuilderEntry<FilesystemEntry>, Error> {
+    ) -> Result<&mut BuilderEntry<FilesystemEntry>, AddEntryError> {
         let fs_entry = FilesystemEntry::with_metadata(path, metadata).await?;
         let name =
             sanitize_entry_name_slashes(name, matches!(fs_entry.entry_type, EntryType::Directory));
@@ -271,21 +271,19 @@ impl Builder<FilesystemEntry> {
         &mut self,
         directory: PathBuf,
         root_name: Option<&str>,
-    ) -> Result<(), Error> {
-        let dtf = |e| Error::DirectoryTraversalFailed { source: e };
-
-        let directory_metadata = metadata(&directory).await.map_err(dtf)?;
+    ) -> Result<(), AddEntryError> {
+        let directory_metadata = metadata(&directory).await?;
 
         // Cleaning up the root name trailing slashes:
         let root_name = root_name.map(|root_name| format!("{}/", root_name.trim_matches('/')));
 
         let mut stack = vec![directory.clone()];
         while let Some(path) = stack.pop() {
-            let mut dir = read_dir(path).await.map_err(dtf)?;
+            let mut dir = read_dir(path).await?;
 
-            while let Some(dir_entry) = dir.next_entry().await.map_err(dtf)? {
+            while let Some(dir_entry) = dir.next_entry().await? {
                 let path = dir_entry.path();
-                let metadata = dir_entry.metadata().await.map_err(dtf)?;
+                let metadata = dir_entry.metadata().await?;
 
                 if metadata.is_dir() {
                     stack.push(path.clone());

@@ -17,7 +17,7 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() -> std::io::Result<()> {
+async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     let top_level_dir_name = args

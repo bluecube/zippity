@@ -8,9 +8,9 @@ use std::{
 #[cfg(feature = "chrono")]
 use chrono::{Datelike, NaiveDateTime, TimeZone, Timelike};
 use indexmap::IndexMap;
+use thiserror::Error;
 
 use crate::{
-    Error,
     entry_data::EntryData,
     reader::{Reader, ReaderEntry, Sizes},
     structs::{self, PackedStructZippityExt},
@@ -311,6 +311,35 @@ pub struct Builder<D: EntryData> {
     total_size: u64,
 }
 
+/// An error that can be encountered while adding entries to a `Builder`.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum AddEntryError {
+    /// Entry name too long (length must fit into 16bit)
+    #[error("Entry name too long")] // Not mentioning the name here, because it's too long :)
+    TooLongEntryName {
+        /// The name of the entry that was too long.
+        entry_name: String,
+    },
+    /// Adding entry would cause the ZIP file to be longer than `u64::MAX`
+    #[error("Adding entry {entry_name} would cause the ZIP file to be longer than u64::MAX")]
+    TooLongZipFile {
+        /// The name of the entry that would make the zip file too long.
+        entry_name: String,
+    },
+    /// Duplicate entry name
+    #[error("Duplicate entry name {entry_name}")]
+    DuplicateEntryName {
+        /// The name of the entry that was duplicated.
+        entry_name: String,
+    },
+
+    /// Other IO error, only encountered when using [`crate::FilesystemEntry`].
+    #[cfg(feature = "tokio-file")]
+    #[error("IO error: {0}")]
+    IOError(#[from] std::io::Error),
+}
+
 impl<D: EntryData + Debug> Debug for Builder<D> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Builder")
@@ -354,18 +383,18 @@ impl<D: EntryData> Builder<D> {
         &mut self,
         name: String,
         data: T,
-    ) -> std::result::Result<&mut BuilderEntry<D>, Error> {
+    ) -> std::result::Result<&mut BuilderEntry<D>, AddEntryError> {
         use indexmap::map::Entry;
 
         if u16::try_from(name.len()).is_err() {
-            return Err(Error::TooLongEntryName { entry_name: name });
+            return Err(AddEntryError::TooLongEntryName { entry_name: name });
         }
         let headers_size = local_header_size(&name) + cd_header_size(&name);
 
         let map_vacant_entry = match self.entries.entry(name) {
             Entry::Vacant(e) => e,
             Entry::Occupied(e) => {
-                return Err(Error::DuplicateEntryName {
+                return Err(AddEntryError::DuplicateEntryName {
                     entry_name: e.key().clone(),
                 });
             }
@@ -378,7 +407,7 @@ impl<D: EntryData> Builder<D> {
         {
             Some(size) => size,
             None => {
-                return Err(Error::TooLongZipFile {
+                return Err(AddEntryError::TooLongZipFile {
                     entry_name: map_vacant_entry.into_key(),
                 });
             }
@@ -562,7 +591,7 @@ mod test {
         let e = builder
             .add_entry("X".repeat(name_length), b"".as_ref())
             .unwrap_err();
-        assert_matches!(e, Error::TooLongEntryName { entry_name } if entry_name.len() == name_length);
+        assert_matches!(e, AddEntryError::TooLongEntryName { entry_name } if entry_name.len() == name_length);
     }
 
     mod too_large_zip {
@@ -576,7 +605,7 @@ mod test {
             let e = builder
                 .add_entry("x".to_string(), Zeros::new(u64::MAX))
                 .unwrap_err();
-            assert_matches!(e, Error::TooLongZipFile { entry_name } if entry_name == "x");
+            assert_matches!(e, AddEntryError::TooLongZipFile { entry_name } if entry_name == "x");
         }
 
         #[tokio::test]
@@ -586,7 +615,7 @@ mod test {
             let entry = Zeros::new(u64::MAX - 1024);
             let _ = builder.add_entry("x".to_string(), entry.clone()).unwrap();
             let e = builder.add_entry("y".to_string(), entry).unwrap_err();
-            assert_matches!(e, Error::TooLongZipFile { entry_name } if entry_name == "y");
+            assert_matches!(e, AddEntryError::TooLongZipFile { entry_name } if entry_name == "y");
         }
 
         #[tokio::test]
@@ -599,7 +628,7 @@ mod test {
                 Zeros::new(u64::MAX - local_header_size("x") - cd_header_size("y") - eocd_size());
             let _ = builder.add_entry("x".to_string(), entry.clone()).unwrap();
             let e = builder.add_entry("y".to_string(), entry).unwrap_err();
-            assert_matches!(e, Error::TooLongZipFile { entry_name } if entry_name == "y");
+            assert_matches!(e, AddEntryError::TooLongZipFile { entry_name } if entry_name == "y");
         }
     }
 
