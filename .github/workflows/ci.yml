@@ -67,7 +67,6 @@ jobs:
 
       - name: Run cargo clippy
         uses: actions-rs/cargo@v1
-        continue-on-error: true  # TODO: We're allowing clippy errors for now, disable later!
         with:
           command: clippy
           args: -- -D warnings
