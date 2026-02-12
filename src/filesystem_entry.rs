@@ -324,14 +324,14 @@ mod test {
 
         for (name, _) in content.0 {
             // First check that the file entry itself is stored in the builder
-            assert!(builder.entries.contains_key(name.as_str()));
+            assert!(builder.get_entries().contains_key(name.as_str()));
 
             // Then check that every parent directory of the path is stored
             let mut path = name.as_str();
             while let Some(pos) = path.rfind('/') {
                 let path_with_slash = &path[..=pos];
                 path = &path[..pos];
-                assert!(builder.entries.contains_key(path_with_slash));
+                assert!(builder.get_entries().contains_key(path_with_slash));
             }
         }
     }
@@ -429,7 +429,7 @@ mod test {
         // Not having to recalcualte the CRC makes the second reader actually seek in
         // the file, not just read the whole thing and ignore the beginning.
         for (k, v) in whole_reader.crc32s() {
-            builder.entries.get_mut(k).unwrap().crc32(v);
+            builder.get_entries_mut().get_mut(k).unwrap().crc32(v);
         }
 
         let mut reader = pin!(builder.build());

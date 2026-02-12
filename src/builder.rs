@@ -305,7 +305,7 @@ fn eocd_size() -> u64 {
 /// Represents entries of the zip file, which can be converted to a `Reader`.
 #[derive(Clone)]
 pub struct Builder<D: EntryData> {
-    pub(crate) entries: IndexMap<String, BuilderEntry<D>>,
+    entries: IndexMap<String, BuilderEntry<D>>,
     time_converter: Option<TimeConverter>,
     /// Total size of the zip.
     total_size: u64,
@@ -464,6 +464,16 @@ impl<D: EntryData> Builder<D> {
     {
         self.time_converter = Some(Rc::new(system_timezone_converter(tz)));
         self
+    }
+
+    /// Returns a reference to all entries currently in the builder.
+    pub fn get_entries(&self) -> &IndexMap<String, BuilderEntry<D>> {
+        &self.entries
+    }
+
+    /// Returns a mutable reference to all entries currently in the builder.
+    pub fn get_entries_mut(&mut self) -> &mut IndexMap<String, BuilderEntry<D>> {
+        &mut self.entries
     }
 }
 
