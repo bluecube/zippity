@@ -2,6 +2,10 @@
 
 Library for asynchronously creating a ZIP file on the fly.
 
+[![CI](https://github.com/bluecube/zippity/actions/workflows/ci.yml/badge.svg)](https://github.com/bluecube/zippity/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/docsrs/zippity/latest)](https://docs.rs/zippity)
+[![Coverage Status](https://coveralls.io/repos/github/bluecube/zippity/badge.svg?branch=coveralls)](https://coveralls.io/github/bluecube/zippity?branch=coveralls)
+
 ## Features
 
 - Async, using tokio.
