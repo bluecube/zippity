@@ -10,6 +10,8 @@ use tokio::io::ReadBuf;
 use crate::entry_data::EntryReader;
 
 /// Wraps an existing [`EntryReader`] and calculates CRC32 while reading from it.
+/// Also adapts the two phase seek (as in) from [`tokio::io::AsyncSeek`] to a simpler
+/// single call interface similar to `futures::io::AsyncSeek`.
 #[pin_project]
 pub struct CrcReader<T> {
     #[pin]
@@ -29,19 +31,18 @@ impl<T> CrcReader<T> {
         }
     }
 
-    pub fn get_crc32(&self) -> u32 {
-        // Cloning as a workaround -- finalize consumes, but we only have the hasher borrowed
-        self.hasher.clone().finalize()
+    /// Returns the CRC32 calculated from the read data if `CrcReader::seek()`
+    /// was not used, `None` if it was.
+    pub fn get_crc32(&self) -> Option<u32> {
+        if self.did_seek {
+            None
+        } else {
+            // Cloning as a workaround -- finalize consumes, but we only have the hasher borrowed
+            Some(self.hasher.clone().finalize())
+        }
     }
 
-    pub fn is_crc_valid(&self) -> bool {
-        !self.did_seek
-    }
-}
-
-impl<T> CrcReader<T> {
-    /// This is method adapts the two phase seek from [`tokio::io::AsyncSeek`] to a simpler
-    /// single call interface similar to `futures::io::AsyncSeek`.
+    /// Seeks in the reader.
     pub fn seek<D>(
         mut self: Pin<&mut Self>,
         data: &D,
@@ -51,29 +52,10 @@ impl<T> CrcReader<T> {
     where
         T: EntryReader<D>,
     {
-        if self.seek_in_progress {
-            self.poll_seek_complete(data, ctx)
-        } else {
+        if !self.seek_in_progress {
             self.as_mut().start_seek(data, position)?;
-            self.as_mut().poll_seek_complete(data, ctx)
         }
-    }
-
-    pub fn poll_read<D>(
-        self: Pin<&mut Self>,
-        data: &D,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<Result<()>>
-    where
-        T: EntryReader<D>,
-    {
-        let projected = self.project();
-        let filled_len_before = buf.filled().len();
-        ready!(projected.inner_reader.poll_read(data, cx, buf))?;
-        projected.hasher.update(&buf.filled()[filled_len_before..]);
-
-        Poll::Ready(Ok(()))
+        self.poll_seek_complete(data, ctx)
     }
 }
 
@@ -84,7 +66,12 @@ impl<D, T: EntryReader<D>> EntryReader<D> for CrcReader<T> {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<Result<()>> {
-        self.poll_read(data, cx, buf)
+        let projected = self.project();
+        let filled_len_before = buf.filled().len();
+        ready!(projected.inner_reader.poll_read(data, cx, buf))?;
+        projected.hasher.update(&buf.filled()[filled_len_before..]);
+
+        Poll::Ready(Ok(()))
     }
 
     fn start_seek(self: Pin<&mut Self>, data: &D, pos: SeekFrom) -> Result<()> {
@@ -127,7 +114,7 @@ mod test {
             .unwrap();
 
         assert!(output == content);
-        assert!(reader.get_crc32() == crc32fast::hash(&content));
+        assert!(reader.get_crc32().unwrap() == crc32fast::hash(&content));
     }
 
     /// Verify a known example CRC value.
@@ -139,6 +126,6 @@ mod test {
         let _ = entry_reader::read_to_vec(reader.as_mut(), &data, data.len())
             .await
             .unwrap();
-        assert!(reader.get_crc32() == 0x9be3_e0a3);
+        assert!(reader.get_crc32().unwrap() == 0x9be3_e0a3);
     }
 }

@@ -9,7 +9,7 @@ use pin_project::pin_project;
 use tokio::io::{AsyncRead, AsyncSeek, ReadBuf};
 
 use crate::crc_reader::CrcReader;
-use crate::entry_data::EntryData;
+use crate::entry_data::{EntryData, EntryReader as _};
 use crate::structs::PackedStructZippityExt;
 use crate::{Error, structs};
 
@@ -116,12 +116,9 @@ impl<D: EntryData> ReaderEntry<D> {
             }
         }
 
-        assert!(
-            file_reader.is_crc_valid(),
-            "We didn't seek in the reader, so the CRC should be correctly calculated"
-        );
-
-        let crc32 = file_reader.get_crc32();
+        let crc32 = file_reader
+            .get_crc32()
+            .expect("We didn't seek in the reader, so the CRC should be correctly calculated");
 
         pinned.set(ReaderPinned::Nothing);
 
@@ -547,8 +544,7 @@ impl ReadState {
         if output.remaining() == remaining_before_poll {
             // Nothing was output => we read everything in the file already
 
-            if file_reader.is_crc_valid() {
-                let actual_crc = file_reader.get_crc32();
+            if let Some(actual_crc) = file_reader.get_crc32() {
                 if let Some(expected_crc) = entry.crc32
                     && expected_crc != actual_crc
                 {
