@@ -73,8 +73,8 @@ impl<D: EntryData> BuilderEntry<D> {
     /// This is helpful, because if the `[Reader]` seeks over the file content, but still needs
     /// to output the CRC, we can just output this value instead of opening and the entry and
     /// calculating it.
-    /// Providing a wrong value will be detected in some cases, but generally it will lead to
-    /// a damaged zip file.
+    /// Providing a wrong value will in some cases be detected during reading
+    /// (as [`crate::reader::ReadError::SizeMismatch`]), but generally it will lead to a damaged zip file.
     /// The CRC32 values for a file can be obtained from the method `[Reader::crc32s()]` after
     /// it was calculated in the `[Reader]`.
     pub fn crc32(&mut self, crc32: u32) -> &mut Self {
