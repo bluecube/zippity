@@ -347,9 +347,9 @@ impl<D: EntryData> Builder<D> {
     /// The returned reference can be used to add metadata to the entry.
     ///
     /// # Errors
-    /// Will return an error if `name` is longer than `u16::MAX` (limitation of Zip format),
+    /// Returns an error if `name` is longer than `u16::MAX` (limitation of Zip format),
     /// or the given entry name is already present in the archive.
-    /// Will return an error if the size of the zip file would become larger than `u64::MAX` after the add.
+    /// Returns an error if the size of the zip file would become larger than `u64::MAX` after the add.
     pub fn add_entry<T: Into<D>>(
         &mut self,
         name: String,

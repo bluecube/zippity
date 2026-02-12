@@ -19,8 +19,8 @@ use crate::{Builder, BuilderEntry, EntryData, Error};
 
 /// An `EntryData` implementation representing a filesystem object -- file, directory or symlink.
 ///
-/// Constructing this structure directly through `FilesystemEntry::with_metadata()` gives the most
-/// versatile interface, but `Builder::add_filesystem_entry` or `Builder::add_directory_recursive`
+/// Constructing this structure directly through [`FilesystemEntry::with_metadata()`] gives the most
+/// versatile interface, but [`Builder::add_filesystem_entry`] or [`Builder::add_directory_recursive`]
 /// can be used as simpler (and more opinionated) alternatives.
 #[derive(Debug, Clone)]
 pub struct FilesystemEntry {
@@ -46,6 +46,8 @@ impl FilesystemEntry {
 }
 
 impl EntryType {
+    /// Constructs the entry type with already extracted metadata.
+    /// This helps avoid repeated redundant calls of `metadata()`.
     async fn with_metadata(path: &Path, metadata: &Metadata) -> Result<Self, Error> {
         if metadata.is_dir() {
             Ok(EntryType::Directory)
@@ -91,6 +93,8 @@ impl EntryData for FilesystemEntry {
     }
 }
 
+/// Future for obtaining [`FilesystemEntryReader`].
+/// Mostly this covers opening the file.
 pub enum FilesystemEntryFuture {
     File {
         file_future: Pin<Box<dyn Future<Output = std::io::Result<File>>>>,
@@ -119,6 +123,7 @@ impl Future for FilesystemEntryFuture {
     }
 }
 
+/// [`EntryData::Reader`] implementation covering files (data comes from the file itself) and symlinks (data is stored in an `Arc<[u8]>`).
 #[pin_project(project = FilesystemEntryReaderProj)]
 pub enum FilesystemEntryReader {
     File(#[pin] File),
@@ -155,7 +160,7 @@ impl AsyncSeek for FilesystemEntryReader {
     }
 }
 
-/// Modifies the `entry_name` to have no trailing slashes for files and one trailig slash for directories
+/// Modifies the `entry_name` to have no trailing slashes for files and exactly one trailig slash for directories.
 fn sanitize_entry_name_slashes(mut entry_name: String, is_directory: bool) -> String {
     entry_name.truncate(entry_name.trim_end_matches('/').len());
     if is_directory {
@@ -217,12 +222,51 @@ impl Builder<FilesystemEntry> {
     }
 
     /// Adds content of a directory to the builder recursively.
-    /// Adds both files and directories, calls `Builder::add_filesystem_entry` for each item.
+    /// Adds both files and directories, calls [`Builder::add_filesystem_entry`] for each item.
     /// If `root_name` is Some, it is used as a prefix for all entry names, separated by a slash
     /// and also the root directory is added as a separate directory entry.
     /// If `root_name` is Some and contains slashes itself, its parent directories are not added as zip entries.
+    /// # Examples
+    /// Given directory with subdirectory `foo` and files `foo/bar` and `baz`:
+    ///
+    /// ## No prefix
+    /// ```
+    /// # tokio_test::block_on(async {
+    /// # let tempdir = tempfile::TempDir::new().unwrap();
+    /// # let dir = tempdir.path().to_path_buf();
+    /// # let foo_path = dir.join("foo");
+    /// # std::fs::create_dir(&foo_path).unwrap();
+    /// # std::fs::write(foo_path.join("bar"), b"").unwrap();
+    /// # std::fs::write(dir.join("baz"), b"").unwrap();
+    /// # let mut builder = zippity::Builder::new();
+    /// builder.add_directory_recursive(dir, None).await;
+    /// assert_eq!(builder.get_entries().len(), 3);
+    /// assert!(builder.get_entries().contains_key("foo/"));
+    /// assert!(builder.get_entries().contains_key("foo/bar"));
+    /// assert!(builder.get_entries().contains_key("baz"));
+    /// # })
+    /// ```
+    ///
+    /// ## Simple prefix
+    /// ```
+    /// # tokio_test::block_on(async {
+    /// # let tempdir = tempfile::TempDir::new().unwrap();
+    /// # let dir = tempdir.path().to_path_buf();
+    /// # let foo_path = dir.join("foo");
+    /// # std::fs::create_dir(&foo_path).unwrap();
+    /// # std::fs::write(foo_path.join("bar"), b"").unwrap();
+    /// # std::fs::write(dir.join("baz"), b"").unwrap();
+    /// # let mut builder = zippity::Builder::new();
+    /// builder.add_directory_recursive(dir, Some("prefix")).await;
+    /// assert_eq!(builder.get_entries().len(), 4);
+    /// assert!(builder.get_entries().contains_key("prefix/"));
+    /// assert!(builder.get_entries().contains_key("prefix/foo/"));
+    /// assert!(builder.get_entries().contains_key("prefix/foo/bar"));
+    /// assert!(builder.get_entries().contains_key("prefix/baz"));
+    /// # })
+    /// ```
     /// # Errors
-    /// Forwards errors from `FilesystemEntry::with_metadata` and `Builder::add_entry`, or io errors from directory traversal.
+    /// Forwards errors from [`FilesystemEntry::with_metadata`] and [`Builder::add_entry`], or IO errors from directory traversal.
     pub async fn add_directory_recursive(
         &mut self,
         directory: PathBuf,
