@@ -70,23 +70,22 @@ impl<D: EntryData> BuilderEntry<D> {
 
     /// Sets the CRC32 of this entry.
     ///
-    /// This is helpful, because if the `[Reader]` seeks over the file content, but still needs
+    /// This is helpful, because if the [`Reader`] seeks over the file content, but still needs
     /// to output the CRC, we can just output this value instead of opening and the entry and
     /// calculating it.
     /// Providing a wrong value will in some cases be detected during reading
-    /// (as [`crate::reader::ReadError::SizeMismatch`]), but generally it will lead to a damaged zip file.
-    /// The CRC32 values for a file can be obtained from the method `[Reader::crc32s()]` after
-    /// it was calculated in the `[Reader]`.
+    /// (as [`crate::ReadError::Crc32Mismatch`]), but generally it will lead to a damaged zip file.
+    /// The CRC32 values for a file can be obtained from the method [`Reader::crc32s()`].
     pub fn crc32(&mut self, crc32: u32) -> &mut Self {
         self.crc32 = Some(crc32);
         self
     }
 
-    /// Sets the last modification date and time of the entry.
+    /// Sets the last modification date and time of the entry using date and time fields.
     ///
-    /// Returns None if the date is out of the representable range (1980-1-1 to 2107-12-31)
+    /// Returns `None` if the date is out of the representable range (1980-01-01 to 2107-12-31).
     ///
-    /// Note that only even seconds can be stored and the value will get rounded down.
+    /// Note that only even seconds can be stored; the value will be rounded down to the nearest even second.
     pub fn datetime_fields(
         &mut self,
         year: i32,
@@ -102,14 +101,14 @@ impl<D: EntryData> BuilderEntry<D> {
         Some(self)
     }
 
-    /// Sets the last modification date and time of the entry.
+    /// Sets the last modification date and time of the entry using date and time fields.
     ///
-    /// If the date is out of the representable range (1980-1-1 to 2107-12-31), this method
-    /// ignores the error and keeps previous value (default value is 1980-1-1T00:00:00).
+    /// If the date is out of the representable range (1980-01-01 to 2107-12-31), the datetime
+    /// is set to the default value (1980-01-01T00:00:00).
     ///
-    /// Note that only even seconds can be stored and the value will get rounded down.
+    /// Note that only even seconds can be stored; the value will be rounded down to the nearest even second.
     ///
-    /// This is equivalent to calling `Builder::datetime_fields`, but ignoring the possible `None`.
+    /// This is equivalent to calling [`BuilderEntry::datetime_fields()`], but with a default fallback.
     pub fn datetime_fields_or_default(
         &mut self,
         year: i32,
@@ -123,16 +122,15 @@ impl<D: EntryData> BuilderEntry<D> {
         self
     }
 
-    /// Sets the last modification date and time of the entry.
+    /// Sets the last modification date and time of the entry using [`SystemTime`].
     ///
-    /// Uses the time converter set by the last call to `Builder::system_time_converter`, or `Builder::system_timezone`.
+    /// Uses the time converter set by the last call to [`Builder::system_time_converter()`] or [`Builder::system_time_timezone()`].
     ///
-    /// Returns None if the converter is not set, or date is out of the representable range (1980-1-1 to 2107-12-31)
-    /// Note that only even seconds can be stored and the value will get rounded down.
+    /// Returns `None` if the converter is not set, or the date is out of the representable range (1980-01-01 to 2107-12-31).
     ///
-    /// Note that only even seconds can be stored and the value will get rounded down.
+    /// Note that only even seconds can be stored; the value will be rounded down to the nearest even second.
     ///
-    /// This is equivalent to calling `Builder::datetime_fields`, with `SystemTime` converted to fields representation.
+    /// This is equivalent to calling [`BuilderEntry::datetime_fields()`] with converted [`SystemTime`].
     pub fn datetime_system(&mut self, datetime: SystemTime) -> Option<&mut Self> {
         let converter = self.time_converter.as_ref()?;
         let converted = converter(datetime);
@@ -146,27 +144,29 @@ impl<D: EntryData> BuilderEntry<D> {
         )
     }
 
-    /// Sets the last modification date and time of the entry.
+    /// Sets the last modification date and time of the entry using [`SystemTime`].
     ///
-    /// Uses the time converter set by the last call to `Builder::system_time_converter`, or `Builder::system_timezone`.
+    /// Uses the time converter set by the last call to [`Builder::system_time_converter()`] or [`Builder::system_time_timezone()`].
     ///
-    /// If the converter is not set, or the date is out of the representable range (1980-1-1 to 2107-12-31),
-    /// this method ignores the error and keeps previous value (default value is 1980-1-1T00:00:00).
+    /// If the converter is not set, or the date is out of the representable range (1980-01-01 to 2107-12-31),
+    /// the datetime is set to the default value (1980-01-01T00:00:00).
     ///
-    /// Note that only even seconds can be stored and the value will get rounded down.
+    /// Note that only even seconds can be stored; the value will be rounded down to the nearest even second.
     ///
-    /// This is equivalent to calling `Builder::datetime_fields_or_default`, with `SystemTime` converted to fields representation.
+    /// This is equivalent to calling [`BuilderEntry::datetime_fields_or_default()`] with converted [`SystemTime`].
     pub fn datetime_system_or_default(&mut self, datetime: SystemTime) -> &mut Self {
         self.datetime_system(datetime);
         self
     }
 
     #[cfg(feature = "chrono")]
-    /// Sets the last modification date and time of the entry.
+    /// Sets the last modification date and time of the entry using [`NaiveDateTime`].
     ///
-    /// Returns None if the date is out of the representable range (1980-1-1 to 2107-12-31)
+    /// Returns `None` if the date is out of the representable range (1980-01-01 to 2107-12-31).
     ///
-    /// Note that only even seconds can be stored and the value will get rounded down.
+    /// Note that only even seconds can be stored; the value will be rounded down to the nearest even second.
+    ///
+    /// This is equivalent to calling [`BuilderEntry::datetime_fields()`] with converted [`NaiveDateTime`].
     pub fn datetime(&mut self, datetime: NaiveDateTime) -> Option<&mut Self> {
         self.datetime_fields(
             datetime.year(),
@@ -179,14 +179,14 @@ impl<D: EntryData> BuilderEntry<D> {
     }
 
     #[cfg(feature = "chrono")]
-    /// Sets the last modification date and time of the entry.
+    /// Sets the last modification date and time of the entry using [`NaiveDateTime`].
     ///
-    /// If the date is out of the representable range (1980-1-1 to 2107-12-31), this method
-    /// ignores the error and keeps previous value (default value is 1980-1-1T00:00:00).
+    /// If the date is out of the representable range (1980-01-01 to 2107-12-31), the datetime
+    /// is set to the default value (1980-01-01T00:00:00).
     ///
-    /// Note that only even seconds can be stored and the value will get rounded down.
+    /// Note that only even seconds can be stored; the value will be rounded down to the nearest even second.
     ///
-    /// This is equivalent to calling `Builder::datetime_fields`, but ignoring the possible `None`.
+    /// This is equivalent to calling [`BuilderEntry::datetime_fields_or_default()`] with converted [`NaiveDateTime`].
     pub fn datetime_or_default(&mut self, datetime: NaiveDateTime) -> &mut Self {
         self.datetime_fields(
             datetime.year(),
@@ -198,7 +198,9 @@ impl<D: EntryData> BuilderEntry<D> {
         );
         self
     }
+
     /// Sets the entry to be a file.
+    ///
     /// This is the default.
     pub fn file(&mut self) -> &mut Self {
         self.file_type = BuilderFileType::File;
@@ -206,6 +208,7 @@ impl<D: EntryData> BuilderEntry<D> {
     }
 
     /// Sets the entry to be a directory.
+    ///
     /// This method only modifies the unix permissions, directory entries should contain no data
     /// and the entry names should end with slash and, neither of which is enforced or
     /// verified by zippity.
@@ -215,22 +218,25 @@ impl<D: EntryData> BuilderEntry<D> {
     }
 
     /// Sets the entry to be a symlink.
-    /// Symlinks don't support setting permissions will ignore any value set.
+    ///
+    /// Symlinks don't support setting permissions and will ignore any value set.
     pub fn symlink(&mut self) -> &mut Self {
         self.file_type = BuilderFileType::Symlink;
         self
     }
 
-    /// Sets the low 9 bits of unix permissions (with mask 0o777) of the entry.
-    /// If permissions are not set, default is 0o755 for directories and 0o644 for files.
-    /// Symlinks don't support setting permissions will ignore any value set.
+    /// Sets the low 9 bits of unix permissions (with mask `0o777`) of the entry.
+    ///
+    /// If permissions are not set, default is `0o755` for directories and `0o644` for files.
+    ///
+    /// Symlinks don't support setting permissions and will ignore any value set.
     pub fn unix_permissions(&mut self, permissions: u32) -> &mut Self {
         self.permissions = BuilderPermissions::UnixPermissions(permissions & 0o777);
         self
     }
 
-    /// Sets the entry permissions based on `fs::Permissions`.
-    /// On unix this is equivalent to calling `unix_permissions` with the output of `permissions.mode()`,
+    /// Sets the entry permissions based on [`std::fs::Permissions`].
+    /// On unix this is equivalent to calling [`BuilderEntry::unix_permissions()`],
     /// on non-unix systems this sets the file as RO or RW.
     pub fn permissions(&mut self, permissions: &Permissions) -> &mut Self {
         #[cfg(unix)]
@@ -246,7 +252,7 @@ impl<D: EntryData> BuilderEntry<D> {
     }
 
     /// Sets the entry permissions to be read only or read-write.
-    /// This overrides anything set using `permissions` or `unix_permissions`.
+    /// This overrides anything set using [`BuilderEntry::permissions()`] or [`BuilderEntry::unix_permissions()`].
     pub fn readonly(&mut self, ro: bool) -> &mut Self {
         self.permissions = if ro {
             BuilderPermissions::Ro
@@ -256,11 +262,14 @@ impl<D: EntryData> BuilderEntry<D> {
         self
     }
 
-    /// Sets entry type (directory / symlink / file), unix permissions and modification time from `fs::Metadata`.
+    /// Sets entry type (directory / symlink / file), unix permissions and modification time from [`std::fs::Metadata`].
     ///
-    /// Uses the time converter set by the last call to `Builder::system_time_converter`, or `Builder::system_timezone`.
-    /// If the converter is not set, or the date is out of the representable range (1980-1-1 to 2107-12-31),
-    /// this method ignores the error and keeps previous modification time (default value is 1980-1-1T00:00:00).
+    /// Uses the time converter set by the last call to [`Builder::system_time_converter()`]
+    /// or [`Builder::system_time_timezone()`]. If the converter is not set, or the date is
+    /// out of the representable range (1980-01-01 to 2107-12-31), the modification time
+    /// is set to the default value (1980-01-01T00:00:00).
+    ///
+    /// Note that only even seconds can be stored; the value will be rounded down to the nearest even second.
     pub fn metadata(&mut self, metadata: &Metadata) -> &mut Self {
         if metadata.is_dir() {
             self.directory();
@@ -302,7 +311,7 @@ fn eocd_size() -> u64 {
         + structs::EndOfCentralDirectory::packed_size()
 }
 
-/// Represents entries of the zip file, which can be converted to a `Reader`.
+/// Represents entries of the zip file, which can be converted to a [`Reader`].
 #[derive(Clone)]
 pub struct Builder<D: EntryData> {
     entries: IndexMap<String, BuilderEntry<D>>,
@@ -311,11 +320,11 @@ pub struct Builder<D: EntryData> {
     total_size: u64,
 }
 
-/// An error that can be encountered while adding entries to a `Builder`.
+/// An error that can be encountered while adding entries to a [`Builder`].
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum AddEntryError {
-    /// Entry name too long (length must fit into 16bit)
+    /// Entry name is longer than `u16::MAX`
     #[error("Entry name too long")] // Not mentioning the name here, because it's too long :)
     TooLongEntryName {
         /// The name of the entry that was too long.
@@ -373,7 +382,7 @@ impl<D: EntryData> Builder<D> {
     }
 
     /// Adds an entry to the zip file.
-    /// The returned reference can be used to add metadata to the entry.
+    /// The returned reference can be used to modify metadata to the entry.
     ///
     /// # Errors
     /// Returns an error if `name` is longer than `u16::MAX` (limitation of Zip format),
@@ -418,13 +427,14 @@ impl<D: EntryData> Builder<D> {
         Ok(inserted)
     }
 
-    /// Return the size of the zip file if it was built immediately.
+    /// Returns the size of the zip file if it was built immediately.
+    ///
     /// Returns the same value as `self.build().size()`.
     pub fn size(&self) -> u64 {
         self.total_size
     }
 
-    /// Stops the build phase of the zi file and converts the builder into [`Reader`].
+    /// Finishes the build phase of the ZIP file and converts the builder into a [`Reader`].
     #[must_use]
     pub fn build(self) -> Reader<D> {
         // All size calculations in this method add up to self.total_size, so they are guaranteed to not overflow.
@@ -470,8 +480,8 @@ impl<D: EntryData> Builder<D> {
 
     /// Sets a converter function that will be used for converting system times to field representation.
     ///
-    /// The converter is passed to newly created builder entries and used in `BuilderEntry::datetime_system`,
-    /// `BuilderEntry::datetime_system_or_default` and `BuilderEntry::metadata`.
+    /// The converter is passed to newly created builder entries and used in [`BuilderEntry::datetime_system()`],
+    /// [`BuilderEntry::datetime_system_or_default()`] and [`BuilderEntry::metadata()`].
     pub fn system_time_converter<F>(&mut self, converter: F) -> &mut Self
     where
         F: Fn(SystemTime) -> (i32, u32, u32, u32, u32, u32) + 'static,
@@ -480,12 +490,10 @@ impl<D: EntryData> Builder<D> {
         self
     }
 
-    /// Sets a converter function based on a `chrono::TimeZone`.
+    /// Wrapper over [`Builder::system_time_converter()`] which sets a converter function based on a [`chrono::TimeZone`].
     ///
-    /// This is a wrapper over `system_time_converter`.
-    ///
-    /// The converter is passed to newly created builder entries and used in `BuilderEntry::datetime_system`,
-    /// `BuilderEntry::datetime_system_or_default` and `BuilderEntry::metadata`.
+    /// The converter is passed to newly created builder entries and used in [`BuilderEntry::datetime_system()`],
+    /// [`BuilderEntry::datetime_system_or_default()`] and [`BuilderEntry::metadata()`].
     #[cfg(feature = "chrono")]
     pub fn system_time_timezone<Tz>(&mut self, tz: Tz) -> &mut Self
     where
@@ -506,10 +514,10 @@ impl<D: EntryData> Builder<D> {
     }
 }
 
-/// Creates a converter function suitable for `Builder::system_time_converter`, that
+/// Creates a converter function suitable for [`Builder::system_time_converter()`], that
 /// uses chrono and the given timezone to build the field representation.
 ///
-/// This is the internal behavior of `Builder::system_time_zone`, refactored out
+/// This is the internal behavior of [`Builder::system_time_timezone()`], refactored out
 /// for access during testing.
 #[cfg(feature = "chrono")]
 fn system_timezone_converter<Tz>(

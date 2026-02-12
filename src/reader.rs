@@ -277,7 +277,9 @@ pub struct Reader<D: EntryData> {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum ReadError {
-    /// Entry reports a size that does not match the actual size.
+    /// Entry reports (in [`EntryData::size()`]) a size that does not match the actual size.
+    ///
+    /// This error is not guaranteed to be detected when seeking in the ZIP.
     #[error("Entry {entry_name} reports size {expected_size} B, but was {actual_size} B")]
     SizeMismatch {
         /// The name of the entry.
@@ -287,7 +289,9 @@ pub enum ReadError {
         /// The actual size of the entry.
         actual_size: u64,
     },
-    /// Entry was given a CRC value that does not match the computed one.
+    /// Entry was given a CRC value (in [`crate::BuilderEntry::crc32()`]) that does not match the computed one.
+    ///
+    /// This error is not guaranteed to be detected when seeking in the ZIP.
     #[error(
         "Entry {entry_name} was given a CRC value {expected_crc:08x} that does not match the computed {actual_crc:08x}"
     )]

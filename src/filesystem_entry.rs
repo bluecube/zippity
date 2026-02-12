@@ -17,7 +17,7 @@ use tokio::{
 
 use crate::{Builder, BuilderEntry, EntryData, builder::AddEntryError};
 
-/// An `EntryData` implementation representing a filesystem object -- file, directory or symlink.
+/// An [`EntryData`] implementation representing a filesystem object -- file, directory or symlink.
 ///
 /// Constructing this structure directly through [`FilesystemEntry::with_metadata()`] gives the most
 /// versatile interface, but [`Builder::add_filesystem_entry`] or [`Builder::add_directory_recursive`]
@@ -201,11 +201,12 @@ fn make_entry_name(
 
 impl Builder<FilesystemEntry> {
     /// Addd a filesystem entry to the builder.
+    ///
     /// This method handles setting entry type, permissions and modification time from the metadata
     /// and modifies the entry name to include a final slash for directories (or remove the slash for non-directories).
     /// Symlinks are added as symlink type, not followed.
     /// # Errors
-    /// Forwards errors from `FilesystemEntry::with_metadata` and `Builder::add_entry`.
+    /// Forwards errors from [`FilesystemEntry::with_metadata`] and [`Builder::add_entry`].
     pub async fn add_filesystem_entry(
         &mut self,
         name: String,
@@ -222,10 +223,12 @@ impl Builder<FilesystemEntry> {
     }
 
     /// Adds content of a directory to the builder recursively.
+    ///
     /// Adds both files and directories, calls [`Builder::add_filesystem_entry`] for each item.
     /// If `root_name` is Some, it is used as a prefix for all entry names, separated by a slash
     /// and also the root directory is added as a separate directory entry.
     /// If `root_name` is Some and contains slashes itself, its parent directories are not added as zip entries.
+    /// Any trailing slashes (including no trailing slashes) in `root_name` will be normalized to a single trailing slash.
     /// # Examples
     /// Given directory with subdirectory `foo` and files `foo/bar` and `baz`:
     ///
@@ -263,6 +266,25 @@ impl Builder<FilesystemEntry> {
     /// assert!(builder.get_entries().contains_key("prefix/foo/"));
     /// assert!(builder.get_entries().contains_key("prefix/foo/bar"));
     /// assert!(builder.get_entries().contains_key("prefix/baz"));
+    /// # })
+    /// ```
+    ///
+    /// ## Prefix contains slashes
+    /// ```
+    /// # tokio_test::block_on(async {
+    /// # let tempdir = tempfile::TempDir::new().unwrap();
+    /// # let dir = tempdir.path().to_path_buf();
+    /// # let foo_path = dir.join("foo");
+    /// # std::fs::create_dir(&foo_path).unwrap();
+    /// # std::fs::write(foo_path.join("bar"), b"").unwrap();
+    /// # std::fs::write(dir.join("baz"), b"").unwrap();
+    /// # let mut builder = zippity::Builder::new();
+    /// builder.add_directory_recursive(dir, Some("pre/fix")).await;
+    /// assert_eq!(builder.get_entries().len(), 4);
+    /// assert!(builder.get_entries().contains_key("pre/fix/"));
+    /// assert!(builder.get_entries().contains_key("pre/fix/foo/"));
+    /// assert!(builder.get_entries().contains_key("pre/fix/foo/bar"));
+    /// assert!(builder.get_entries().contains_key("pre/fix/baz"));
     /// # })
     /// ```
     /// # Errors

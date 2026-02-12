@@ -33,8 +33,7 @@ impl<D: EntryData> Stream for BytesStream<D> {
         assert!(projected.buffer.is_empty());
         assert!(projected.buffer.capacity() > 0);
 
-        let n: u64 =
-            std::task::ready!(poll_read_buf(projected.reader, cx, projected.buffer))? as u64;
+        let n = std::task::ready!(poll_read_buf(projected.reader, cx, projected.buffer))? as u64;
 
         if n == 0 {
             return Poll::Ready(None);

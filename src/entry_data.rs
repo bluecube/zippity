@@ -7,9 +7,9 @@ use std::{
 
 use tokio::io::{AsyncRead, AsyncSeek, ReadBuf};
 
-/// A trait for types that can be used as an entryin a zip file.
+/// A trait for types that can be used as an entry in a ZIP file.
 ///
-/// This trait is used to abstract over different data sources for zip entries,
+/// This trait is used to abstract over different data sources for ZIP entries,
 /// such as byte slices, vectors, or asynchronous readers.
 pub trait EntryData {
     /// Type that can be use to read the entry's data.
