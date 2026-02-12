@@ -8,10 +8,10 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use assert2::{assert, debug_assert};
+use assert2::assert;
 use pin_project::pin_project;
 use tokio::{
-    fs::{File, read_dir, read_link},
+    fs::{File, metadata, read_dir, read_link},
     io::{AsyncRead, AsyncSeek, ReadBuf},
 };
 
@@ -168,30 +168,30 @@ fn sanitize_entry_name_slashes(mut entry_name: String, is_directory: bool) -> St
 /// Creates a string suitable as ZIP file entry name from a path.
 ///
 /// `root` has to be a prefix of `path`.
-/// `root_name` is used as described in `add_directory_recrusive`, but additionally it is not allowed to end with slashes.
-/// If `is_directory`, then the generated path will end with a slash.
+/// `root_name` is used as described in [`Builder::add_directory_recursive()`], but additionally it has to to end with a single slash.
+/// If `is_directory` is `True`, then the generated path will end with a slash.
 fn make_entry_name(
     path: &Path,
     root: &Path,
     root_name: Option<&str>,
     is_directory: bool,
 ) -> String {
-    if let Some(root_name) = root_name {
-        assert!(!root_name.ends_with('/'));
-    }
-    assert!(path != root);
-
-    let root_separator = if root_name.is_some() { "/" } else { "" };
-    let root_name = root_name.unwrap_or_default();
+    let root_prefix = match root_name {
+        Some(root_prefix) => {
+            assert!(root_prefix.ends_with('/'));
+            root_prefix
+        }
+        None => "",
+    };
     let path = path
         .strip_prefix(root)
         .expect("`root` must be a prefix of `path`")
         .to_string_lossy();
     assert!(!path.ends_with('/'));
-    debug_assert!(!path.is_empty());
+    assert!(!path.is_empty());
     let trailing_slash = if is_directory { "/" } else { "" };
 
-    format!("{root_name}{root_separator}{path}{trailing_slash}")
+    format!("{root_prefix}{path}{trailing_slash}")
 }
 
 impl Builder<FilesystemEntry> {
@@ -227,12 +227,15 @@ impl Builder<FilesystemEntry> {
         &mut self,
         directory: PathBuf,
         root_name: Option<&str>,
-    ) -> std::result::Result<(), Error> {
-        let mut stack = vec![directory.clone()];
-        let root_name_trimmed = root_name.map(|root_name| root_name.trim_end_matches('/'));
-
+    ) -> Result<(), Error> {
         let dtf = |e| Error::DirectoryTraversalFailed { source: e };
 
+        let directory_metadata = metadata(&directory).await.map_err(dtf)?;
+
+        // Cleaning up the root name trailing slashes:
+        let root_name = root_name.map(|root_name| format!("{}/", root_name.trim_matches('/')));
+
+        let mut stack = vec![directory.clone()];
         while let Some(path) = stack.pop() {
             let mut dir = read_dir(path).await.map_err(dtf)?;
 
@@ -245,12 +248,20 @@ impl Builder<FilesystemEntry> {
                 }
 
                 let entry_name =
-                    make_entry_name(&path, &directory, root_name_trimmed, metadata.is_dir());
+                    make_entry_name(&path, &directory, root_name.as_deref(), metadata.is_dir());
                 let zip_entry = FilesystemEntry::with_metadata(path, &metadata).await?;
 
                 let added_entry = self.add_entry(entry_name, zip_entry)?;
                 added_entry.metadata(&metadata);
             }
+        }
+
+        if let Some(root_name) = root_name {
+            let root_entry = FilesystemEntry::with_metadata(directory, &directory_metadata).await?;
+            dbg!(&root_name);
+            self.add_entry(root_name, root_entry)?;
+
+            // TODO: What happens if this is called on a file and not a directory? What if root_name is set?
         }
 
         Ok(())
@@ -287,9 +298,9 @@ mod test {
 
     #[test_case("/root/subdir/file.txt", "/root", None, false => "subdir/file.txt"; "file without root name")]
     #[test_case("/root/subdir", "/root", None, true => "subdir/"; "directory without root name")]
-    #[test_case("/root/subdir/file.txt", "/root", Some("archive"), false => "archive/subdir/file.txt"; "file with root name")]
-    #[test_case("/root/subdir", "/root", Some("archive"), true => "archive/subdir/"; "directory with root name")]
-    #[test_case("/root/subdir", "/root/", Some("archive"), true => "archive/subdir/"; "root name with trailing slash")]
+    #[test_case("/root/subdir/file.txt", "/root", Some("archive/"), false => "archive/subdir/file.txt"; "file with root name")]
+    #[test_case("/root/subdir", "/root", Some("archive/"), true => "archive/subdir/"; "directory with root name")]
+    #[test_case("/root/subdir", "/root/", Some("archive/"), true => "archive/subdir/"; "root name with trailing slash")]
     fn test_make_entry_name(
         path: &str,
         root: &str,
@@ -303,26 +314,33 @@ mod test {
 
     /// Tests that when adding a directory, entries are added to the builder as expected:
     /// Each file has an entry, each parent directory of the entry has an entry.
+    /// Also verifies that root name is present in entry names and there is a corresponding directory entry for it.
     /// Content is not tested at all.
     #[proptest(async = "tokio")]
-    async fn add_directory_recursive_entries_no_prefix(
+    async fn add_directory_recursive_entries(
         #[any(ArbitraryTestEntryDataParams {
             entry_name_pattern: "[a-z]+(/[a-z]+)+", // limit special characters to not mess up the paths
             max_size: 0,
             ..Default::default()
         })]
         content: TestEntryData,
+        #[strategy(proptest::option::of("[a-z]+/?"))] root_name: Option<String>,
     ) {
         let test_dir = content.make_directory().unwrap();
         let mut builder = Builder::new();
         builder
-            .add_directory_recursive(test_dir.as_ref().to_path_buf(), None)
+            .add_directory_recursive(test_dir.as_ref().to_path_buf(), root_name.as_deref())
             .await
             .unwrap();
 
         dbg!(content.0.len());
 
         for (name, _) in content.0 {
+            let name = match root_name {
+                Some(ref root_name) => format!("{}/{}", root_name.trim_end_matches('/'), name),
+                None => name.to_owned(),
+            };
+
             // First check that the file entry itself is stored in the builder
             assert!(builder.get_entries().contains_key(name.as_str()));
 
@@ -331,7 +349,11 @@ mod test {
             while let Some(pos) = path.rfind('/') {
                 let path_with_slash = &path[..=pos];
                 path = &path[..pos];
-                assert!(builder.get_entries().contains_key(path_with_slash));
+                assert!(
+                    builder.get_entries().contains_key(path_with_slash),
+                    "{} must be present in builder entries",
+                    path_with_slash
+                );
             }
         }
     }
