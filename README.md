@@ -54,11 +54,6 @@ copy(&mut zippity, &mut sink()).await.unwrap();
 })
 ```
 
-## Current state
-Consider this a beta version.
-The library is functional, but there's a lot of polish needed before releasing 1.0.0.
-See [#1](https://github.com/bluecube/zippity/issues/1).
-
 ## Crate features
 
 | Name | Description | Default |
@@ -67,3 +62,8 @@ See [#1](https://github.com/bluecube/zippity/issues/1).
 | `bytes` | Provide method `Bytes::into_bytes_stream()`. | no |
 | `actix-web` | Adds`actix_web::Reponder` implementation to `zippity::Reader` | no |
 | `chrono` | Support for setting last modification date and time metadata using types from `chrono`. | no |
+
+## Current state
+The library is fully functional. I'm now waiting for some experience with the final integration into
+other projects (and perhaps some user feedback) before releasing stable version 1.0.
+
