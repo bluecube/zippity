@@ -70,3 +70,27 @@ jobs:
         with:
           command: clippy
           args: --all-features -- -D warnings
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+
+      - name: Install tarpaulin
+        uses: actions-rs/cargo@v1
+        with:
+          command: install
+          args: cargo-tarpaulin
+
+      - name: Measure coverage
+        uses: actions-rs/cargo@v1
+        with:
+          command: tarpaulin
+          args: --all-features -o Lcov
+
+      - name: Upload to Coveralls
+        uses: coverallsapp/github-action@v2
+        with:
+          file: lcov.info
