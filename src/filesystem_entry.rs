@@ -11,7 +11,7 @@ use std::{
 use assert2::assert;
 use pin_project::pin_project;
 use tokio::{
-    fs::{File, metadata, read_dir, read_link},
+    fs::{File, read_dir, read_link, symlink_metadata},
     io::{AsyncRead, AsyncSeek, ReadBuf},
 };
 
@@ -204,7 +204,7 @@ impl Builder<FilesystemEntry> {
     ///
     /// This method handles setting entry type, permissions and modification time from the metadata
     /// and modifies the entry name to include a final slash for directories (or remove the slash for non-directories).
-    /// Symlinks are added as symlink type, not followed.
+    ///
     /// # Errors
     /// Forwards errors from [`FilesystemEntry::with_metadata`] and [`Builder::add_entry`].
     pub async fn add_filesystem_entry(
@@ -229,6 +229,9 @@ impl Builder<FilesystemEntry> {
     /// and also the root directory is added as a separate directory entry.
     /// If `root_name` is Some and contains slashes itself, its parent directories are not added as zip entries.
     /// Any trailing slashes (including no trailing slashes) in `root_name` will be normalized to a single trailing slash.
+    ///
+    /// Symlinks are added as symlink type, not followed.
+    ///
     /// # Examples
     /// Given directory with subdirectory `foo` and files `foo/bar` and `baz`:
     ///
@@ -288,13 +291,15 @@ impl Builder<FilesystemEntry> {
     /// # })
     /// ```
     /// # Errors
-    /// Forwards errors from [`FilesystemEntry::with_metadata`] and [`Builder::add_entry`], or IO errors from directory traversal.
+    /// Fails if `directory` is not a path to a directory.
+    /// Forwards IO errors encountered during directory traversal.
+    /// Forwards errors from [`FilesystemEntry::with_metadata`] and [`Builder::add_entry`]
     pub async fn add_directory_recursive(
         &mut self,
         directory: PathBuf,
         root_name: Option<&str>,
     ) -> Result<(), AddEntryError> {
-        let directory_metadata = metadata(&directory).await?;
+        let directory_metadata = symlink_metadata(&directory).await?;
 
         // Cleaning up the root name trailing slashes:
         let root_name = root_name.map(|root_name| format!("{}/", root_name.trim_matches('/')));
