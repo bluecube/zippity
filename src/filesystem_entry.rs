@@ -356,6 +356,10 @@ mod test {
     #[test_case("directory///", true => "directory/"; "directory with multiple trailing slashes")]
     #[test_case("a/b.txt", false => "a/b.txt"; "path with internal slashes")]
     #[test_case("/a///b.txt", false => "/a///b.txt"; "path with weird internal slashes is not modified")]
+    #[test_case("", false => ""; "empty string file")]
+    #[test_case("/", false => ""; "single slash file")]
+    #[test_case("/", true => "/"; "single slash directory")]
+    #[test_case("///", true => "/"; "multiple slashes directory")]
     fn test_sanitize_entry_name_slashes(entry_name: &str, is_directory: bool) -> String {
         sanitize_entry_name_slashes(entry_name.to_string(), is_directory)
     }
@@ -376,49 +380,80 @@ mod test {
         make_entry_name(path, root, root_name, is_directory)
     }
 
-    /// Tests that when adding a directory, entries are added to the builder as expected:
-    /// Each file has an entry, each parent directory of the entry has an entry.
-    /// Also verifies that root name is present in entry names and there is a corresponding directory entry for it.
-    /// Content is not tested at all.
-    #[proptest(async = "tokio")]
-    async fn add_directory_recursive_entries(
-        #[any(ArbitraryTestEntryDataParams {
-            entry_name_pattern: "[a-z]+(/[a-z]+)+", // limit special characters to not mess up the paths
-            max_size: 0,
-            ..Default::default()
-        })]
-        content: TestEntryData,
-        #[strategy(proptest::option::of("[a-z]+/?"))] root_name: Option<String>,
-    ) {
-        let test_dir = content.make_directory().unwrap();
-        let mut builder = Builder::new();
-        builder
-            .add_directory_recursive(test_dir.as_ref().to_path_buf(), root_name.as_deref())
-            .await
-            .unwrap();
+    mod add_directory_recursive {
+        use super::*;
+        use assert2::assert;
+        use test_case::test_case;
 
-        dbg!(content.0.len());
+        /// Tests that when adding a directory, entries are added to the builder as expected:
+        /// Each file has an entry, each parent directory of the entry has an entry.
+        /// Also verifies that root name is present in entry names and there is a corresponding directory entry for it.
+        /// Content is not tested at all.
+        #[proptest(async = "tokio")]
+        async fn entries(
+            #[any(ArbitraryTestEntryDataParams {
+                entry_name_pattern: "[a-z]+(/[a-z]+)+", // limit special characters to not mess up the paths
+                max_size: 0,
+                ..Default::default()
+            })]
+            content: TestEntryData,
+            #[strategy(proptest::option::of("[a-z]+/?"))] root_name: Option<String>,
+        ) {
+            let test_dir = content.make_directory().unwrap();
+            let mut builder = Builder::new();
+            builder
+                .add_directory_recursive(test_dir.as_ref().to_path_buf(), root_name.as_deref())
+                .await
+                .unwrap();
 
-        for (name, _) in content.0 {
-            let name = match root_name {
-                Some(ref root_name) => format!("{}/{}", root_name.trim_end_matches('/'), name),
-                None => name.to_owned(),
-            };
+            for (name, _) in content.0 {
+                let name = match root_name {
+                    Some(ref root_name) => format!("{}/{}", root_name.trim_end_matches('/'), name),
+                    None => name.to_owned(),
+                };
 
-            // First check that the file entry itself is stored in the builder
-            assert!(builder.get_entries().contains_key(name.as_str()));
+                // First check that the file entry itself is stored in the builder
+                assert!(builder.get_entries().contains_key(name.as_str()));
 
-            // Then check that every parent directory of the path is stored
-            let mut path = name.as_str();
-            while let Some(pos) = path.rfind('/') {
-                let path_with_slash = &path[..=pos];
-                path = &path[..pos];
-                assert!(
-                    builder.get_entries().contains_key(path_with_slash),
-                    "{} must be present in builder entries",
-                    path_with_slash
-                );
+                // Then check that every parent directory of the path is stored
+                let mut path = name.as_str();
+                while let Some(pos) = path.rfind('/') {
+                    let path_with_slash = &path[..=pos];
+                    path = &path[..pos];
+                    assert!(
+                        builder.get_entries().contains_key(path_with_slash),
+                        "{} must be present in builder entries",
+                        path_with_slash
+                    );
+                }
             }
+        }
+
+        #[tokio::test]
+        async fn empty_with_root_name() {
+            let tempdir = TempDir::new().unwrap();
+            let mut builder = Builder::new();
+            builder
+                .add_directory_recursive(tempdir.path().to_path_buf(), Some("empty"))
+                .await
+                .unwrap();
+
+            assert!(builder.get_entries().len() == 1);
+            assert!(builder.get_entries().contains_key("empty/"));
+        }
+
+        #[test_case("root" => "root/"; "simple root name")]
+        #[test_case("///root///" => "root/"; "root name with extra slashes")]
+        #[test_case("a/b" => "a/b/"; "root name with internal slashes")]
+        #[tokio::test]
+        async fn root_name_normalization(root_name: &str) -> String {
+            let tempdir = TempDir::new().unwrap();
+            let mut builder = Builder::new();
+            builder
+                .add_directory_recursive(tempdir.path().to_path_buf(), Some(root_name))
+                .await
+                .unwrap();
+            builder.get_entries().keys().next().unwrap().to_string()
         }
     }
 
@@ -490,6 +525,22 @@ mod test {
         }
 
         assert_eq!(fs_entry.path, symlink_path);
+    }
+
+    #[tokio::test]
+    async fn test_add_filesystem_entry() {
+        let tempdir = TempDir::new().unwrap();
+        let file_path = tempdir.path().join("file.txt");
+        tokio::fs::write(&file_path, b"hello").await.unwrap();
+        let metadata = tokio::fs::metadata(&file_path).await.unwrap();
+
+        let mut builder = Builder::new();
+        builder
+            .add_filesystem_entry("renamed.txt".to_string(), file_path, &metadata)
+            .await
+            .unwrap();
+
+        assert!(builder.get_entries().contains_key("renamed.txt"));
     }
 
     /// Create a fixed directory-based sample zip and try reading a random byte in it.
