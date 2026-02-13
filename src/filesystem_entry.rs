@@ -322,10 +322,9 @@ impl Builder<FilesystemEntry> {
 
         if let Some(root_name) = root_name {
             let root_entry = FilesystemEntry::with_metadata(directory, &directory_metadata).await?;
-            dbg!(&root_name);
-            self.add_entry(root_name, root_entry)?;
-
-            // TODO: What happens if this is called on a file and not a directory? What if root_name is set?
+            let added_entry = self.add_entry(root_name, root_entry)?;
+            added_entry.metadata(&directory_metadata);
+            added_entry.directory(); // This is redundant (because we checked that `directory_metadata.is_dir()``), but explicit is good
         }
 
         Ok(())
