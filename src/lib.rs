@@ -23,7 +23,7 @@ pub use entry_data::EntryData;
 pub use reader::{ReadError, Reader};
 
 #[cfg(feature = "tokio-file")]
-pub use filesystem_entry::FilesystemEntry;
+pub use filesystem_entry::{AddDirectoryRecursiveError, AddFilesystemEntryError, FilesystemEntry};
 
 #[cfg(feature = "bytes")]
 pub use bytes::BytesStream;

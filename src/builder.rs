@@ -342,11 +342,6 @@ pub enum AddEntryError {
         /// The name of the entry that was duplicated.
         entry_name: String,
     },
-
-    /// Other IO error, only encountered when using [`crate::FilesystemEntry`].
-    #[cfg(feature = "tokio-file")]
-    #[error("IO error: {0}")]
-    IOError(#[from] std::io::Error),
 }
 
 impl<D: EntryData + Debug> Debug for Builder<D> {

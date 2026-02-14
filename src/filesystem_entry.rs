@@ -10,6 +10,7 @@ use std::{
 
 use assert2::assert;
 use pin_project::pin_project;
+use thiserror::Error;
 use tokio::{
     fs::{File, read_dir, read_link, symlink_metadata},
     io::{AsyncRead, AsyncSeek, ReadBuf},
@@ -212,7 +213,7 @@ impl Builder<FilesystemEntry> {
         name: String,
         path: PathBuf,
         metadata: &Metadata,
-    ) -> Result<&mut BuilderEntry<FilesystemEntry>, AddEntryError> {
+    ) -> Result<&mut BuilderEntry<FilesystemEntry>, AddFilesystemEntryError> {
         let fs_entry = FilesystemEntry::with_metadata(path, metadata).await?;
         let name =
             sanitize_entry_name_slashes(name, matches!(fs_entry.entry_type, EntryType::Directory));
@@ -230,6 +231,7 @@ impl Builder<FilesystemEntry> {
     /// If `root_name` is Some and contains slashes itself, its parent directories are not added as zip entries.
     /// Any trailing slashes (including no trailing slashes) in `root_name` will be normalized to a single trailing slash.
     ///
+    /// `directory` must be a path to a directory.
     /// Symlinks are added as symlink type, not followed.
     ///
     /// # Examples
@@ -298,8 +300,15 @@ impl Builder<FilesystemEntry> {
         &mut self,
         directory: PathBuf,
         root_name: Option<&str>,
-    ) -> Result<(), AddEntryError> {
+    ) -> Result<(), AddDirectoryRecursiveError> {
         let directory_metadata = symlink_metadata(&directory).await?;
+
+        if !directory_metadata.is_dir() {
+            return Err(AddDirectoryRecursiveError::NotADirectory {
+                path: directory,
+                metadata: directory_metadata,
+            });
+        }
 
         // Cleaning up the root name trailing slashes:
         let root_name = root_name.map(|root_name| format!("{}/", root_name.trim_matches('/')));
@@ -334,6 +343,41 @@ impl Builder<FilesystemEntry> {
 
         Ok(())
     }
+}
+
+/// An error that can be encountered while adding filesystem entries to a [`Builder`].
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum AddFilesystemEntryError {
+    /// Error when adding entry to the Builder.
+    #[error("Error when adding entry to the `Builder`: {0}")]
+    AddEntryError(#[from] AddEntryError),
+
+    /// IO error.
+    #[error("IO error: {0}")]
+    IOError(#[from] std::io::Error),
+}
+
+/// An error that can be encountered while recursively adding directories to a [`Builder`].
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum AddDirectoryRecursiveError {
+    /// The top level path is not a directory
+    #[error("The top level path {path} is not a directory")]
+    NotADirectory {
+        /// Path to the object that is not a directory.
+        path: PathBuf,
+        /// Metadata of the object
+        metadata: Metadata,
+    },
+
+    /// Error when adding entry to the Builder.
+    #[error("Error when adding entry to the `Builder`: {0}")]
+    AddEntryError(#[from] AddEntryError),
+
+    /// IO error.
+    #[error("IO error: {0}")]
+    IOError(#[from] std::io::Error),
 }
 
 #[cfg(test)]
@@ -458,6 +502,20 @@ mod test {
                 .await
                 .unwrap();
             builder.get_entries().keys().next().unwrap().to_string()
+        }
+
+        #[tokio::test]
+        async fn not_a_directory() {
+            let tempdir = TempDir::new().unwrap();
+            let file_path = tempdir.path().join("file.txt");
+            tokio::fs::write(&file_path, b"hello").await.unwrap();
+
+            let mut builder = Builder::new();
+            let result = builder.add_directory_recursive(file_path, None).await;
+            assert!(matches!(
+                result,
+                Err(AddDirectoryRecursiveError::NotADirectory { .. })
+            ));
         }
     }
 
