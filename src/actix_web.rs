@@ -19,6 +19,8 @@ use tokio::sync::oneshot;
 
 impl<D: EntryData> Reader<D> {
     /// Wraps this reader into a struct that can be used as a return value from an Actix-web handler.
+    ///
+    /// See the docstring on [`ActixWebAdapter`] for info on response headers.
     pub fn into_responder(self) -> ActixWebAdapter<D> {
         ActixWebAdapter {
             inner: Inner {
@@ -29,10 +31,13 @@ impl<D: EntryData> Reader<D> {
     }
 
     /// Wraps this reader into a struct that can be used as a return value from an Actix-web handler.
-    /// Also returns a oneshot channel receiver that receives a Reader remaining state after the actix web adapter
-    /// is dropped.
+    ///
+    /// Also returns a oneshot channel receiver that receives a Reader remaining state after the
+    /// actix web adapter is dropped.
     /// This is useful to retrieve calculated CRCs after the zip file is served.
-    /// See `Reader::take_pinned()`, `Reader::crc32s()`
+    /// See [`Reader::take_pinned()`], [`Reader::crc32s()`].
+    ///
+    /// See the docstring on [`ActixWebAdapter`] for info on response headers.
     pub fn into_responder_with_channel(self) -> (ActixWebAdapter<D>, oneshot::Receiver<Reader<D>>) {
         let (sender, receiver) = oneshot::channel();
         let adapter = ActixWebAdapter {
@@ -46,6 +51,25 @@ impl<D: EntryData> Reader<D> {
     }
 }
 
+/// An adapter for using [`Reader`] as an `actix_web::Responder`.
+///
+/// The response sets the following headers:
+/// - `Content-Type: application/zip`
+/// - `Content-Length`
+/// - `Accept-Ranges`
+///
+/// Default status code is `200 Ok`.
+///
+/// If header `Range` was set in input, the adapter tries to fullfill the request
+/// and adds the `Content-Range` header.
+/// Status can then also be :
+/// - `400 Bad Request` (if range header had bad content)
+/// - `416 Range Not Satisfiable` if range header had valid content but wrong for the content length
+/// - `206 Partial Content` if only a partial response is produced based on the request
+///
+/// User should provide:
+/// - `Content-Disposition`
+/// - `Cache-Control`, `ETag`, `Last-Modified`
 pub struct ActixWebAdapter<D: EntryData + 'static> {
     inner: Inner<D>,
 }
@@ -59,9 +83,6 @@ impl<D: EntryData + 'static> actix_web::Responder for ActixWebAdapter<D> {
 
         response.insert_header((CONTENT_TYPE, "application/zip"));
         response.insert_header((ACCEPT_RANGES, "bytes"));
-        // TODO: Content-disposition
-        // TODO: Etag?
-        // TODO: If-Range
 
         let (offset, length) = if let Some(ranges_header) = req.headers().get(RANGE) {
             let Some(parsed) = ranges_header

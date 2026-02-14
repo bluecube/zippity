@@ -22,6 +22,8 @@ pub use builder::{AddEntryError, Builder, BuilderEntry};
 pub use entry_data::EntryData;
 pub use reader::{ReadError, Reader};
 
+#[cfg(feature = "actix-web")]
+pub use actix_web::ActixWebAdapter;
 #[cfg(feature = "tokio-file")]
 pub use filesystem_entry::{AddDirectoryRecursiveError, AddFilesystemEntryError, FilesystemEntry};
 
