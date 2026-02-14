@@ -305,7 +305,7 @@ fn cd_header_size(name: &str) -> u64 {
     cd_entry + zip64_extra_data + filename
 }
 
-fn eocd_size() -> u64 {
+pub(crate) fn eocd_size() -> u64 {
     structs::Zip64EndOfCentralDirectoryRecord::packed_size()
         + structs::Zip64EndOfCentralDirectoryLocator::packed_size()
         + structs::EndOfCentralDirectory::packed_size()

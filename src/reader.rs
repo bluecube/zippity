@@ -325,21 +325,22 @@ impl<D: EntryData> Reader<D> {
         }
     }
 
-    /// Creates a reader that contains no data and is always at EOF.
-    /// This is not a valid zip file!
+    /// Creates a reader that reads an empty (but valid) ZIP file.
     /// The resulting Reader is useful mostly as a cheap dummy value for replacing an actual reader.
     #[must_use]
     pub fn new_empty_file() -> Self {
+        let entries = Vec::new();
+        let current_chunk = Chunk::new(&entries);
         Reader {
             sizes: Sizes {
                 cd_offset: 0,
                 cd_size: 0,
                 eocd_offset: 0,
-                total_size: 0,
+                total_size: crate::builder::eocd_size(),
             },
-            entries: Vec::new(),
+            entries,
             read_state: ReadState {
-                current_chunk: Chunk::Finished,
+                current_chunk,
                 chunk_processed_size: 0,
                 position: 0,
                 staging_buffer: Vec::new(),
@@ -350,8 +351,9 @@ impl<D: EntryData> Reader<D> {
     }
 
     /// Takes the internal state of the pinned Reader, leaving state equivalent to
-    /// the result of [`Reader::new_empty_file()`]. Returns a new Reader with state equivalent
-    /// to `self` before the operation. This operation is O(1) and does not allocate.
+    /// the result of [`Reader::new_empty_file()`] (empty but valid ZIP).
+    /// Returns a new Reader with state equivalent to `self` before the operation.
+    /// This operation is O(1) and does not allocate.
     pub fn take_pinned(self: Pin<&mut Self>) -> Reader<D> {
         use std::mem::replace;
 
@@ -1005,7 +1007,6 @@ mod test {
         test_entry_data::{ArbitraryReaderParams, TestEntryData},
     };
     use assert2::assert;
-    use futures_util::FutureExt;
     use std::{io::ErrorKind, pin::pin};
     use test_strategy::proptest;
     use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -1825,24 +1826,51 @@ mod test {
         assert!(cloned_data == original_data);
     }
 
-    /// Test that constructing an empty reader object works and provides no bytes.
-    #[proptest(async = "tokio")]
-    async fn reading_new_empty(#[strategy(read_size_strategy())] read_size: usize) {
-        let zippity = pin!(Reader::<&[u8]>::new_empty_file());
-        let v = read_to_vec(zippity, read_size).await.unwrap();
-        assert!(v == Vec::<u8>::new());
+    mod new_empty {
+        use super::*;
+        use assert2::assert;
+
+        /// Test that constructing an empty reader object works and provides no bytes.
+        #[proptest(async = "tokio")]
+        async fn read(#[strategy(read_size_strategy())] read_size: usize) {
+            let zippity = pin!(Reader::<&[u8]>::new_empty_file());
+            let expected_size = zippity.size();
+            let v = read_to_vec(zippity, read_size).await.unwrap();
+
+            assert!(v.len() as u64 == expected_size);
+        }
+
+        /// Test that empty constructed reader can be seeked in and stoll provides no data.
+        #[proptest(async = "tokio")]
+        async fn seek(
+            #[strategy(read_size_strategy())] read_size: usize,
+            #[strategy(0f64..=1f64)] seek_pos_fraction: f64,
+        ) {
+            let mut zippity = pin!(Reader::<&[u8]>::new_empty_file());
+            let v = read_to_vec(zippity.as_mut(), read_size).await.unwrap();
+            let seek_pos = skip_length(v.len(), seek_pos_fraction);
+
+            zippity.as_mut().seek_from_start_pinned(seek_pos);
+            let v_seeked = read_to_vec(zippity.as_mut(), read_size).await.unwrap();
+
+            assert!(v_seeked == v[usize::try_from(seek_pos).unwrap()..])
+        }
+
+        /// Test that Reader::new_empty_file() provides the same result as using an empty Builder.
+        #[tokio::test]
+        async fn builder_equivalence() {
+            let from_new = read_to_vec(pin!(Reader::<&[u8]>::new_empty_file()), 8192)
+                .await
+                .unwrap();
+            let from_builder = read_to_vec(pin!(Builder::<&[u8]>::new().build()), 8192)
+                .await
+                .unwrap();
+
+            assert!(from_new == from_builder);
+        }
     }
 
-    /// Test that empty constructed reader can be seeked in and stoll provides no data.
-    #[proptest(async = "tokio")]
-    async fn reading_new_empty_seeking(#[strategy(read_size_strategy())] read_size: usize) {
-        let mut zippity = pin!(Reader::<&[u8]>::new_empty_file());
-        zippity.as_mut().seek_from_start_pinned(100);
-        let v = read_to_vec(zippity.as_mut(), read_size).await.unwrap();
-        assert!(v == Vec::<u8>::new());
-    }
-
-    /// Test that taking a reader empties the source and returns the original data.
+    /// Test that taking a reader returns the original data.
     #[proptest(async = "tokio")]
     async fn take_pinned(
         #[any(ArbitraryReaderParams { seek: true, ..Default::default()})] reader: Reader<Vec<u8>>,
@@ -1852,17 +1880,6 @@ mod test {
 
         let mut reader = pin!(reader);
         let taken = pin!(reader.as_mut().take_pinned());
-
-        let mut buffer = vec![0; 1024];
-
-        assert!(
-            reader
-                .read(&mut buffer)
-                .now_or_never()
-                .expect("Reading taken value should return immediately")
-                .expect("Reading taken value should not fail")
-                == 0
-        );
 
         let data = read_to_vec(taken, 8192).await.unwrap();
         assert!(data.len() as u64 + pos == size);
