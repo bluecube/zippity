@@ -57,7 +57,7 @@ impl<D: EntryData + 'static> actix_web::Responder for ActixWebAdapter<D> {
         let mut response = HttpResponse::Ok();
         let size = self.inner.bytes_stream.reader_ref().size();
 
-        response.insert_header((CONTENT_TYPE, "application/x-zip"));
+        response.insert_header((CONTENT_TYPE, "application/zip"));
         response.insert_header((ACCEPT_RANGES, "bytes"));
         // TODO: Content-disposition
         // TODO: Etag?
